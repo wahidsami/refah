@@ -289,76 +289,71 @@ const startServer = async () => {
         await db.sequelize.authenticate();
         console.log('Database connection established successfully.');
 
-        // Production: migrations-only — no sync(). Run migrations before deploy (see PHASE1_RELIABILITY.md).
-        if (process.env.NODE_ENV === 'production') {
-            console.log('✅ Production: using migrations only (sync skipped).');
-        } else {
-            // Sync models in dependency order (development/test only; force: false)
-            await db.SuperAdmin.sync({ force: false });
-            await db.ActivityLog.sync({ force: false });
-            await db.SubscriptionPackage.sync({ force: false });
-            await db.Tenant.sync({ force: false });
-            await db.TenantSubscription.sync({ force: false });
-            await db.TenantUsage.sync({ force: false });
-            await db.UsageAlert.sync({ force: false });
-            await db.PlatformUser.sync({ force: false });
-            await db.PaymentMethod.sync({ force: false });
-            await db.User.sync({ force: false });
-            await db.Service.sync({ force: false });
-            await db.Product.sync({ force: false });
-            await db.Customer.sync({ force: false });
-            await db.Staff.sync({ force: false });
-            await db.ServiceEmployee.sync({ force: false });
-            await db.StaffSchedule.sync({ force: false });
-            try {
-                await db.StaffShift.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffShift sync warning:', err.message);
-            }
-            try {
-                await db.StaffBreak.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffBreak sync warning:', err.message);
-            }
-            try {
-                await db.StaffTimeOff.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffTimeOff sync warning:', err.message);
-            }
-            try {
-                await db.StaffScheduleOverride.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffScheduleOverride sync warning:', err.message);
-            }
-            await db.Appointment.sync({ force: false });
-            // RBAC & Financials models (added for Phase 5-6)
-            try {
-                await db.StaffPermission.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffPermission sync warning:', err.message);
-            }
-            try {
-                await db.StaffPayroll.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffPayroll sync warning:', err.message);
-            }
-            try {
-                await db.StaffMessage.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  StaffMessage sync warning:', err.message);
-            }
-            try {
-                await db.Review.sync({ force: false });
-            } catch (err) {
-                console.warn('⚠️  Review sync warning:', err.message);
-            }
-            await db.CustomerInsight.sync({ force: false });
-            await db.Order.sync({ force: false });
-            await db.OrderItem.sync({ force: false });
-            await db.Transaction.sync({ force: false });
-            await db.PublicPageData.sync({ force: false });
-            console.log('✅ Database synced successfully.');
+        // Sync all models (force: false = create missing tables/columns only; safe in production).
+        // Migrations can be run separately to add indexes, RLS, etc.
+        await db.SuperAdmin.sync({ force: false });
+        await db.ActivityLog.sync({ force: false });
+        await db.SubscriptionPackage.sync({ force: false });
+        await db.Tenant.sync({ force: false });
+        await db.TenantSubscription.sync({ force: false });
+        await db.TenantUsage.sync({ force: false });
+        await db.UsageAlert.sync({ force: false });
+        await db.PlatformUser.sync({ force: false });
+        await db.PaymentMethod.sync({ force: false });
+        await db.User.sync({ force: false });
+        await db.Service.sync({ force: false });
+        await db.Product.sync({ force: false });
+        await db.Customer.sync({ force: false });
+        await db.Staff.sync({ force: false });
+        await db.ServiceEmployee.sync({ force: false });
+        await db.StaffSchedule.sync({ force: false });
+        try {
+            await db.StaffShift.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffShift sync warning:', err.message);
         }
+        try {
+            await db.StaffBreak.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffBreak sync warning:', err.message);
+        }
+        try {
+            await db.StaffTimeOff.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffTimeOff sync warning:', err.message);
+        }
+        try {
+            await db.StaffScheduleOverride.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffScheduleOverride sync warning:', err.message);
+        }
+        await db.Appointment.sync({ force: false });
+        try {
+            await db.StaffPermission.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffPermission sync warning:', err.message);
+        }
+        try {
+            await db.StaffPayroll.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffPayroll sync warning:', err.message);
+        }
+        try {
+            await db.StaffMessage.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  StaffMessage sync warning:', err.message);
+        }
+        try {
+            await db.Review.sync({ force: false });
+        } catch (err) {
+            console.warn('⚠️  Review sync warning:', err.message);
+        }
+        await db.CustomerInsight.sync({ force: false });
+        await db.Order.sync({ force: false });
+        await db.OrderItem.sync({ force: false });
+        await db.Transaction.sync({ force: false });
+        await db.PublicPageData.sync({ force: false });
+        console.log('✅ Database synced successfully.');
 
         // Create default super admin if none exists
         await createDefaultSuperAdmin();
