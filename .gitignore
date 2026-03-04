@@ -55,6 +55,9 @@ server/uploads/
 server/firebase-service-account.json
 *-service-account*.json
 
+# Server: binary/base64 assets that may contain tokens (never commit)
+server/logo_base64.txt
+
 # Debug session logs (Cursor)
 debug-*.log
 
