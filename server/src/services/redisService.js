@@ -4,26 +4,45 @@
  */
 
 let redisClient = null;
+let lastRedisErrorLog = 0;
+const REDIS_ERROR_LOG_INTERVAL_MS = 60 * 1000; // log at most once per minute
 
 /**
- * Initialize Redis client
+ * Initialize Redis client (non-blocking; errors do not prevent server startup).
  */
 function initRedis() {
     try {
         const redis = require('redis');
         const client = redis.createClient({
-            url: process.env.REDIS_URL || 'redis://localhost:6379'
+            url: process.env.REDIS_URL || 'redis://localhost:6379',
+            socket: {
+                connectTimeout: 5000,
+                reconnectStrategy: (retries) => {
+                    if (retries > 50) return new Error('Redis max retries');
+                    return Math.min(retries * 200, 5000);
+                }
+            }
         });
 
         client.on('error', (err) => {
-            console.error('Redis Client Error:', err);
+            const now = Date.now();
+            if (now - lastRedisErrorLog >= REDIS_ERROR_LOG_INTERVAL_MS) {
+                lastRedisErrorLog = now;
+                console.error('Redis Client Error:', err.message);
+            }
         });
 
         client.on('connect', () => {
+            lastRedisErrorLog = 0;
             console.log('✅ Redis connected');
         });
 
-        client.connect().catch(console.error);
+        client.connect().catch((err) => {
+            if (Date.now() - lastRedisErrorLog >= REDIS_ERROR_LOG_INTERVAL_MS) {
+                lastRedisErrorLog = Date.now();
+                console.error('Redis connect failed:', err.message);
+            }
+        });
         redisClient = client;
         return client;
     } catch (error) {
