@@ -3,20 +3,20 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('services', 'offerFrom', {
-      type: Sequelize.DATEONLY,
-      allowNull: true,
-      comment: 'Offer valid from (inclusive); null = no start limit'
-    });
-    await queryInterface.addColumn('services', 'offerTo', {
-      type: Sequelize.DATEONLY,
-      allowNull: true,
-      comment: 'Offer valid to (inclusive); null = no end limit'
-    });
+    const sequelize = queryInterface.sequelize;
+    if (sequelize.getDialect() === 'postgres') {
+      await sequelize.query(`
+        ALTER TABLE services ADD COLUMN IF NOT EXISTS "offerFrom" DATE;
+        ALTER TABLE services ADD COLUMN IF NOT EXISTS "offerTo" DATE;
+      `);
+    } else {
+      await queryInterface.addColumn('services', 'offerFrom', { type: Sequelize.DATEONLY, allowNull: true }).catch(() => {});
+      await queryInterface.addColumn('services', 'offerTo', { type: Sequelize.DATEONLY, allowNull: true }).catch(() => {});
+    }
   },
 
   async down(queryInterface) {
-    await queryInterface.removeColumn('services', 'offerFrom');
-    await queryInterface.removeColumn('services', 'offerTo');
+    await queryInterface.removeColumn('services', 'offerFrom').catch(() => {});
+    await queryInterface.removeColumn('services', 'offerTo').catch(() => {});
   }
 };
