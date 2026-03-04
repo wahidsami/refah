@@ -6,6 +6,34 @@ import { useTranslations } from 'next-intl';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
+import { API_BASE_URL } from '@/lib/api';
+
+const SAUDI_CITIES = [
+    { en: 'Abha', ar: 'أبها' },
+    { en: 'Al Hofuf', ar: 'الهفوف' },
+    { en: 'Al Jubail', ar: 'الجبيل' },
+    { en: 'Al Kharj', ar: 'الخرج' },
+    { en: 'Al Khobar', ar: 'الخبر' },
+    { en: 'Al Majma\'ah', ar: 'المجمعة' },
+    { en: 'Al Mubarraz', ar: 'المبرز' },
+    { en: 'Al Qatif', ar: 'القطيف' },
+    { en: 'Buraydah', ar: 'بريدة' },
+    { en: 'Dammam', ar: 'الدمام' },
+    { en: 'Dhahran', ar: 'الظهران' },
+    { en: 'Hafr Al Batin', ar: 'حفر الباطن' },
+    { en: 'Hail', ar: 'حائل' },
+    { en: 'Jeddah', ar: 'جدة' },
+    { en: 'Jizan', ar: 'جازان' },
+    { en: 'Khamis Mushait', ar: 'خميس مشيط' },
+    { en: 'Mecca', ar: 'مكة المكرمة' },
+    { en: 'Medina', ar: 'المدينة المنورة' },
+    { en: 'Najran', ar: 'نجران' },
+    { en: 'Qurayyat', ar: 'القريات' },
+    { en: 'Riyadh', ar: 'الرياض' },
+    { en: 'Tabuk', ar: 'تبوك' },
+    { en: 'Taif', ar: 'الطائف' },
+    { en: 'Yanbu', ar: 'ينبع' }
+].sort((a: any, b: any) => a.en.localeCompare(b.en));
 
 // Step 1: Entity Details Component
 const Step1EntityDetails = ({ formData, handleChange, handleFileChange, errors }: any) => {
@@ -53,25 +81,48 @@ const Step1EntityDetails = ({ formData, handleChange, handleFileChange, errors }
                 </div>
             </div>
 
-            {/* Business Type */}
+            {/* Business Type - Multi-select */}
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                     {t('step1.businessType')} <span className="text-red-500">*</span>
                 </label>
-                <select
-                    name="businessType"
-                    value={formData.businessType}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    required
-                >
-                    <option value="">{t('step1.selectBusinessType')}</option>
-                    <option value="spa">{t('step1.types.spa')}</option>
-                    <option value="salon">{t('step1.types.salon')}</option>
-                    <option value="beauty_center">{t('step1.types.beautyCenter')}</option>
-                    <option value="barbershop">{t('step1.types.barbershop')}</option>
-                    <option value="clinic">{t('step1.types.clinic')}</option>
-                </select>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {[
+                        { value: 'salon', label: t('step1.types.salon'), emoji: '💇' },
+                        { value: 'spa', label: t('step1.types.spa'), emoji: '🧖' },
+                        { value: 'beauty_center', label: t('step1.types.beautyCenter'), emoji: '💅' },
+                        { value: 'barbershop', label: t('step1.types.barbershop'), emoji: '💈' },
+                        { value: 'clinic', label: t('step1.types.clinic'), emoji: '🏥' },
+                    ].map((type) => {
+                        const isSelected = (formData.businessType || []).includes(type.value);
+                        return (
+                            <label
+                                key={type.value}
+                                className={`flex items-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition-all ${isSelected
+                                    ? 'border-purple-500 bg-purple-50'
+                                    : 'border-gray-200 hover:border-gray-300'
+                                    }`}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => {
+                                        const current = formData.businessType || [];
+                                        const updated = isSelected
+                                            ? current.filter((t: string) => t !== type.value)
+                                            : [...current, type.value];
+                                        handleChange({
+                                            target: { name: 'businessType', value: updated }
+                                        } as any);
+                                    }}
+                                    className="w-4 h-4 text-purple-600 rounded"
+                                />
+                                <span className="text-lg">{type.emoji}</span>
+                                <span className="text-sm font-medium text-gray-700">{type.label}</span>
+                            </label>
+                        );
+                    })}
+                </div>
                 {errors.businessType && <p className="text-red-500 text-sm mt-1">{errors.businessType}</p>}
             </div>
 
@@ -237,13 +288,19 @@ const Step1EntityDetails = ({ formData, handleChange, handleFileChange, errors }
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         {t('step1.city')}
                     </label>
-                    <input
-                        type="text"
+                    <select
                         name="city"
                         value={formData.city}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    />
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white"
+                    >
+                        <option value="">{t('step1.selectCity') || 'Select City'}</option>
+                        {SAUDI_CITIES.map(city => (
+                            <option key={city.en} value={city.en}>
+                                {locale === 'ar' ? city.ar : city.en}
+                            </option>
+                        ))}
+                    </select>
                 </div>
 
                 <div>
@@ -294,7 +351,7 @@ const Step2Documentation = ({ formData, handleChange, handleFileChange, errors }
             {/* Commercial Registration */}
             <div className="border border-gray-200 rounded-lg p-6 space-y-4">
                 <h3 className="text-lg font-semibold text-gray-900">{t('step2.cr.title')}</h3>
-                
+
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         {t('step2.cr.number')} <span className="text-red-500">*</span>
@@ -329,7 +386,7 @@ const Step2Documentation = ({ formData, handleChange, handleFileChange, errors }
             {/* Tax Certificate */}
             <div className="border border-gray-200 rounded-lg p-6 space-y-4">
                 <h3 className="text-lg font-semibold text-gray-900">{t('step2.tax.title')}</h3>
-                
+
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         {t('step2.tax.number')} <span className="text-red-500">*</span>
@@ -364,7 +421,7 @@ const Step2Documentation = ({ formData, handleChange, handleFileChange, errors }
             {/* Business License */}
             <div className="border border-gray-200 rounded-lg p-6 space-y-4">
                 <h3 className="text-lg font-semibold text-gray-900">{t('step2.license.title')}</h3>
-                
+
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         {t('step2.license.number')} <span className="text-red-500">*</span>
@@ -606,7 +663,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="providesHomeServices"
                                 value="true"
                                 checked={formData.providesHomeServices === true}
-                                onChange={() => setFormData(prev => ({ ...prev, providesHomeServices: true }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, providesHomeServices: true }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.yes')}</span>
@@ -617,7 +674,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="providesHomeServices"
                                 value="false"
                                 checked={formData.providesHomeServices === false}
-                                onChange={() => setFormData(prev => ({ ...prev, providesHomeServices: false }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, providesHomeServices: false }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.no')}</span>
@@ -636,7 +693,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="sellsProducts"
                                 value="true"
                                 checked={formData.sellsProducts === true}
-                                onChange={() => setFormData(prev => ({ ...prev, sellsProducts: true }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, sellsProducts: true }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.yes')}</span>
@@ -647,7 +704,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="sellsProducts"
                                 value="false"
                                 checked={formData.sellsProducts === false}
-                                onChange={() => setFormData(prev => ({ ...prev, sellsProducts: false }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, sellsProducts: false }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.no')}</span>
@@ -666,7 +723,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="hasOwnPaymentGateway"
                                 value="true"
                                 checked={formData.hasOwnPaymentGateway === true}
-                                onChange={() => setFormData(prev => ({ ...prev, hasOwnPaymentGateway: true }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, hasOwnPaymentGateway: true }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.yes')}</span>
@@ -677,7 +734,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="hasOwnPaymentGateway"
                                 value="false"
                                 checked={formData.hasOwnPaymentGateway === false}
-                                onChange={() => setFormData(prev => ({ ...prev, hasOwnPaymentGateway: false }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, hasOwnPaymentGateway: false }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.no')}</span>
@@ -696,7 +753,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="advertiseOnSocialMedia"
                                 value="true"
                                 checked={formData.advertiseOnSocialMedia === true}
-                                onChange={() => setFormData(prev => ({ ...prev, advertiseOnSocialMedia: true }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, advertiseOnSocialMedia: true }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.yes')}</span>
@@ -707,7 +764,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="advertiseOnSocialMedia"
                                 value="false"
                                 checked={formData.advertiseOnSocialMedia === false}
-                                onChange={() => setFormData(prev => ({ ...prev, advertiseOnSocialMedia: false }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, advertiseOnSocialMedia: false }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.no')}</span>
@@ -726,7 +783,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="wantsRifahPromotion"
                                 value="true"
                                 checked={formData.wantsRifahPromotion === true}
-                                onChange={() => setFormData(prev => ({ ...prev, wantsRifahPromotion: true }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, wantsRifahPromotion: true }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.yes')}</span>
@@ -737,7 +794,7 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                                 name="wantsRifahPromotion"
                                 value="false"
                                 checked={formData.wantsRifahPromotion === false}
-                                onChange={() => setFormData(prev => ({ ...prev, wantsRifahPromotion: false }))}
+                                onChange={() => setFormData((prev: any) => ({ ...prev, wantsRifahPromotion: false }))}
                                 className="w-4 h-4 text-purple-600"
                             />
                             <span className="ml-2 text-sm">{t('step5.no')}</span>
@@ -789,11 +846,10 @@ const Step5BusinessDetails = ({ formData, setFormData, handleChange, errors }: a
                             onClick={() => handleChange({
                                 target: { name: 'serviceRanking', value: star }
                             } as any)}
-                            className={`text-3xl ${
-                                star <= formData.serviceRanking
-                                    ? 'text-yellow-400'
-                                    : 'text-gray-300'
-                            }`}
+                            className={`text-3xl ${star <= formData.serviceRanking
+                                ? 'text-yellow-400'
+                                : 'text-gray-300'
+                                }`}
                         >
                             ★
                         </button>
@@ -818,7 +874,7 @@ const Step6SubscriptionPackage = ({ formData, setFormData, errors }: any) => {
 
     const fetchPackages = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/v1/subscriptions/packages');
+            const response = await fetch(`${API_BASE_URL}/subscriptions/packages`);
             const data = await response.json();
             if (data.success) {
                 setPackages(data.packages.filter((pkg: any) => pkg.isActive));
@@ -843,7 +899,7 @@ const Step6SubscriptionPackage = ({ formData, setFormData, errors }: any) => {
         if (selectedTab === 'monthly') price = pkg.monthlyPrice;
         else if (selectedTab === 'sixMonth') price = pkg.sixMonthPrice;
         else price = pkg.annualPrice;
-        return parseFloat(price) || 0;
+        return parseFloat(String(price)) || 0;
     };
 
     const getSavings = (pkg: any) => {
@@ -867,22 +923,20 @@ const Step6SubscriptionPackage = ({ formData, setFormData, errors }: any) => {
                 <button
                     type="button"
                     onClick={() => setSelectedTab('monthly')}
-                    className={`px-6 py-3 font-medium transition ${
-                        selectedTab === 'monthly'
-                            ? 'text-purple-600 border-b-2 border-purple-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                    }`}
+                    className={`px-6 py-3 font-medium transition ${selectedTab === 'monthly'
+                        ? 'text-purple-600 border-b-2 border-purple-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                        }`}
                 >
                     Monthly
                 </button>
                 <button
                     type="button"
                     onClick={() => setSelectedTab('sixMonth')}
-                    className={`px-6 py-3 font-medium transition ${
-                        selectedTab === 'sixMonth'
-                            ? 'text-purple-600 border-b-2 border-purple-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                    }`}
+                    className={`px-6 py-3 font-medium transition ${selectedTab === 'sixMonth'
+                        ? 'text-purple-600 border-b-2 border-purple-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                        }`}
                 >
                     6 Months
                     <span className="ml-2 text-xs text-green-600 font-semibold">Save 10%</span>
@@ -890,11 +944,10 @@ const Step6SubscriptionPackage = ({ formData, setFormData, errors }: any) => {
                 <button
                     type="button"
                     onClick={() => setSelectedTab('annual')}
-                    className={`px-6 py-3 font-medium transition ${
-                        selectedTab === 'annual'
-                            ? 'text-purple-600 border-b-2 border-purple-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                    }`}
+                    className={`px-6 py-3 font-medium transition ${selectedTab === 'annual'
+                        ? 'text-purple-600 border-b-2 border-purple-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                        }`}
                 >
                     Annual
                     <span className="ml-2 text-xs text-green-600 font-semibold">Save 17%</span>
@@ -917,11 +970,10 @@ const Step6SubscriptionPackage = ({ formData, setFormData, errors }: any) => {
                         return (
                             <div
                                 key={pkg.id}
-                                className={`relative border-2 rounded-lg p-6 cursor-pointer transition ${
-                                    isSelected
-                                        ? 'border-purple-600 bg-purple-50'
-                                        : 'border-gray-200 hover:border-purple-300'
-                                } ${pkg.isFeatured ? 'ring-2 ring-purple-500' : ''}`}
+                                className={`relative border-2 rounded-lg p-6 cursor-pointer transition ${isSelected
+                                    ? 'border-purple-600 bg-purple-50'
+                                    : 'border-gray-200 hover:border-purple-300'
+                                    } ${pkg.isFeatured ? 'ring-2 ring-purple-500' : ''}`}
                                 onClick={() => handlePackageSelect(pkg.id, selectedTab)}
                             >
                                 {pkg.isFeatured && (
@@ -996,7 +1048,7 @@ const Step7ServiceAgreement = ({ formData, handleChange, errors }: any) => {
             <div className="border border-gray-300 rounded-lg p-6 max-h-96 overflow-y-auto bg-gray-50">
                 <div className="prose prose-sm max-w-none">
                     <h3 className="text-lg font-bold mb-4">{t('step7.agreementTitle')}</h3>
-                    
+
                     <div className="space-y-4 text-gray-700">
                         <p>{t('step7.section1.title')}</p>
                         <p>{t('step7.section1.content')}</p>
@@ -1052,12 +1104,13 @@ export default function RegisterPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [errors, setErrors] = useState<any>({});
+    const [isSuccess, setIsSuccess] = useState(false);
 
     const [formData, setFormData] = useState({
         // Step 1: Entity Details
         name_en: '',
         name_ar: '',
-        businessType: '',
+        businessType: [] as string[],
         phone: '',
         mobile: '',
         email: '',
@@ -1070,26 +1123,26 @@ export default function RegisterPage() {
         city: '',
         country: 'Saudi Arabia',
         googleMapLink: '',
-        
+
         // Step 2: Official Documentation
         crNumber: '',
         taxNumber: '',
         licenseNumber: '',
-        
+
         // Step 3: Contact Person
         contactPersonNameAr: '',
         contactPersonNameEn: '',
         contactPersonEmail: '',
         contactPersonMobile: '',
         contactPersonPosition: '',
-        
+
         // Step 4: Owner Details
         ownerNameAr: '',
         ownerNameEn: '',
         ownerPhone: '',
         ownerEmail: '',
         ownerNationalId: '',
-        
+
         // Step 5: Business Details
         providesHomeServices: false,
         staffCount: '',
@@ -1099,11 +1152,11 @@ export default function RegisterPage() {
         serviceRanking: 0,
         advertiseOnSocialMedia: false,
         wantsRifahPromotion: false,
-        
+
         // Step 6: Subscription Package
         selectedPackageId: '',
         selectedBillingPeriod: 'monthly',
-        
+
         // Step 7: Service Agreement
         acceptedServiceAgreement: false
     });
@@ -1118,7 +1171,7 @@ export default function RegisterPage() {
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value, type } = e.target;
         const checked = (e.target as HTMLInputElement).checked;
-        
+
         setFormData(prev => ({
             ...prev,
             [name]: type === 'checkbox' ? checked : value
@@ -1150,7 +1203,7 @@ export default function RegisterPage() {
         if (step === 1) {
             if (!formData.name_en) newErrors.name_en = t('step1.errors.nameEnRequired');
             if (!formData.name_ar) newErrors.name_ar = t('step1.errors.nameArRequired');
-            if (!formData.businessType) newErrors.businessType = t('step1.errors.businessTypeRequired');
+            if (!formData.businessType || formData.businessType.length === 0) newErrors.businessType = t('step1.errors.businessTypeRequired');
             if (!formData.email) newErrors.email = t('step1.errors.emailRequired');
             if (!formData.phone) newErrors.phone = t('step1.errors.phoneRequired');
             if (!formData.mobile) newErrors.mobile = t('step1.errors.mobileRequired');
@@ -1235,13 +1288,13 @@ export default function RegisterPage() {
             // Append files
             Object.entries(files).forEach(([key, file]) => {
                 if (file) {
-                    submitData.append(key, file);
+                    if (file instanceof File) submitData.append(key, file);
                 }
             });
 
             submitData.append('preferredLanguage', locale);
 
-            const response = await fetch('http://localhost:5000/api/v1/auth/tenant/register', {
+            const response = await fetch(`${API_BASE_URL}/auth/tenant/register`, {
                 method: 'POST',
                 body: submitData
             });
@@ -1257,8 +1310,8 @@ export default function RegisterPage() {
                 localStorage.setItem('tenant_token', data.accessToken);
             }
 
-            // Redirect to dashboard with success message
-            router.push(`/${locale}/dashboard?registered=true`);
+            // Show success screen instead of immediate redirect
+            setIsSuccess(true);
 
         } catch (err: any) {
             console.error('Registration error:', err);
@@ -1271,7 +1324,7 @@ export default function RegisterPage() {
     return (
         <div className="min-h-screen relative py-12 px-4">
             {/* Background Image - No Overlay */}
-            <div 
+            <div
                 className="fixed inset-0 z-0"
                 style={{
                     backgroundImage: 'url(/regbg.jpg)',
@@ -1282,7 +1335,7 @@ export default function RegisterPage() {
             ></div>
 
             {/* Back to Home Button */}
-            <Link 
+            <Link
                 href={`/${locale}`}
                 className="fixed top-6 left-6 z-20 bg-white/90 backdrop-blur-sm text-purple-900 hover:bg-white px-4 py-2 rounded-lg transition flex items-center gap-2 shadow-lg font-semibold"
             >
@@ -1297,10 +1350,10 @@ export default function RegisterPage() {
                 <div className="text-center mb-8">
                     <div className="flex justify-center mb-4">
                         <div className="bg-white rounded-full p-4 shadow-xl">
-                            <Image 
-                                src="/refahlogo.svg" 
-                                alt="Rifah Logo" 
-                                width={80} 
+                            <Image
+                                src="/refahlogo.svg"
+                                alt="Rifah Logo"
+                                width={80}
                                 height={80}
                                 className="w-20 h-20"
                             />
@@ -1319,25 +1372,22 @@ export default function RegisterPage() {
                             <div key={step} className="flex-1">
                                 <div className="flex items-center">
                                     <div
-                                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                                            step <= currentStep
-                                                ? 'bg-purple-600 text-white shadow-lg'
-                                                : 'bg-gray-200 text-gray-600'
-                                        }`}
+                                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${step <= currentStep
+                                            ? 'bg-purple-600 text-white shadow-lg'
+                                            : 'bg-gray-200 text-gray-600'
+                                            }`}
                                     >
                                         {step}
                                     </div>
                                     {step < 7 && (
                                         <div
-                                            className={`flex-1 h-1 mx-2 rounded ${
-                                                step < currentStep ? 'bg-purple-600' : 'bg-gray-300'
-                                            }`}
+                                            className={`flex-1 h-1 mx-2 rounded ${step < currentStep ? 'bg-purple-600' : 'bg-gray-300'
+                                                }`}
                                         />
                                     )}
                                 </div>
-                                <div className={`text-xs text-center mt-2 font-semibold ${
-                                    step <= currentStep ? 'text-purple-900' : 'text-gray-600'
-                                }`}>
+                                <div className={`text-xs text-center mt-2 font-semibold ${step <= currentStep ? 'text-purple-900' : 'text-gray-600'
+                                    }`}>
                                     {t(`steps.step${step}`)}
                                 </div>
                             </div>
@@ -1347,103 +1397,125 @@ export default function RegisterPage() {
 
                 {/* Form */}
                 <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-8 border border-white/20">
-                    {error && (
-                        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-                            {error}
+                    {isSuccess ? (
+                        <div className="text-center py-12 animate-in fade-in zoom-in duration-500">
+                            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-md border-4 border-white">
+                                <svg className="w-12 h-12 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <h2 className="text-3xl font-bold text-gray-900 mb-4">{t('success.title')}</h2>
+                            <p className="text-lg text-gray-600 mb-10 max-w-lg mx-auto leading-relaxed">
+                                {t('success.message')}
+                            </p>
+                            <Link
+                                href={`/${locale}/dashboard`}
+                                className="inline-block px-8 py-4 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition shadow-lg hover:shadow-xl w-full sm:w-auto"
+                            >
+                                {t('success.goToDashboard')}
+                            </Link>
                         </div>
+                    ) : (
+                        <>
+                            {error && (
+                                <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+                                    {error}
+                                </div>
+                            )}
+
+                            <form onSubmit={handleSubmit}>
+                                {currentStep === 1 && (
+                                    <Step1EntityDetails
+                                        formData={formData}
+                                        handleChange={handleChange}
+                                        handleFileChange={handleFileChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 2 && (
+                                    <Step2Documentation
+                                        formData={formData}
+                                        handleChange={handleChange}
+                                        handleFileChange={handleFileChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 3 && (
+                                    <Step3ContactPerson
+                                        formData={formData}
+                                        handleChange={handleChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 4 && (
+                                    <Step4OwnerDetails
+                                        formData={formData}
+                                        handleChange={handleChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 5 && (
+                                    <Step5BusinessDetails
+                                        formData={formData}
+                                        setFormData={setFormData}
+                                        handleChange={handleChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 6 && (
+                                    <Step6SubscriptionPackage
+                                        formData={formData}
+                                        setFormData={setFormData}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {currentStep === 7 && (
+                                    <Step7ServiceAgreement
+                                        formData={formData}
+                                        handleChange={handleChange}
+                                        errors={errors}
+                                    />
+                                )}
+
+                                {/* Navigation Buttons */}
+                                <div className="flex justify-between mt-8 pt-6 border-t">
+                                    {currentStep > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={prevStep}
+                                            className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
+                                        >
+                                            {t('buttons.previous')}
+                                        </button>
+                                    )}
+
+                                    {currentStep < 7 ? (
+                                        <button
+                                            type="button"
+                                            onClick={nextStep}
+                                            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition ml-auto"
+                                        >
+                                            {t('buttons.next')}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="submit"
+                                            disabled={loading || !formData.acceptedServiceAgreement}
+                                            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                                        >
+                                            {loading ? t('buttons.submitting') : t('buttons.submit')}
+                                        </button>
+                                    )}
+                                </div>
+                            </form>
+                        </>
                     )}
-
-                    <form onSubmit={handleSubmit}>
-                        {currentStep === 1 && (
-                            <Step1EntityDetails
-                                formData={formData}
-                                handleChange={handleChange}
-                                handleFileChange={handleFileChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 2 && (
-                            <Step2Documentation
-                                formData={formData}
-                                handleChange={handleChange}
-                                handleFileChange={handleFileChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 3 && (
-                            <Step3ContactPerson
-                                formData={formData}
-                                handleChange={handleChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 4 && (
-                            <Step4OwnerDetails
-                                formData={formData}
-                                handleChange={handleChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 5 && (
-                            <Step5BusinessDetails
-                                formData={formData}
-                                setFormData={setFormData}
-                                handleChange={handleChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 6 && (
-                            <Step6SubscriptionPackage
-                                formData={formData}
-                                setFormData={setFormData}
-                                errors={errors}
-                            />
-                        )}
-
-                        {currentStep === 7 && (
-                            <Step7ServiceAgreement
-                                formData={formData}
-                                handleChange={handleChange}
-                                errors={errors}
-                            />
-                        )}
-
-                        {/* Navigation Buttons */}
-                        <div className="flex justify-between mt-8 pt-6 border-t">
-                            {currentStep > 1 && (
-                                <button
-                                    type="button"
-                                    onClick={prevStep}
-                                    className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition"
-                                >
-                                    {t('buttons.previous')}
-                                </button>
-                            )}
-
-                            {currentStep < 7 ? (
-                                <button
-                                    type="button"
-                                    onClick={nextStep}
-                                    className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition ml-auto"
-                                >
-                                    {t('buttons.next')}
-                                </button>
-                            ) : (
-                                <button
-                                    type="submit"
-                                    disabled={loading || !formData.acceptedServiceAgreement}
-                                    className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
-                                >
-                                    {loading ? t('buttons.submitting') : t('buttons.submit')}
-                                </button>
-                            )}
-                        </div>
-                    </form>
                 </div>
 
                 {/* Login Link */}

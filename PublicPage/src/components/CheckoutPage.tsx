@@ -3,7 +3,7 @@ import { ChevronLeft, User, MapPin, CreditCard, Package, CheckCircle } from 'luc
 import { CheckoutData } from '../types';
 import { useCart } from '../context/CartContext';
 import { Currency } from './Currency';
-import { publicAPI } from '../lib/api';
+import { getImageUrl, publicAPI } from '../lib/api';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
 import { LoginModal } from './LoginModal';
@@ -386,15 +386,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({ onBack, onComplete }
                 {cartItems.map((item) => {
                   // Format image URL - handle different formats
                   const productImageRaw = item.product.image;
-                  const productImage = productImageRaw
-                    ? productImageRaw.startsWith('http')
-                      ? productImageRaw
-                      : `http://localhost:5000${productImageRaw.startsWith('/uploads/')
-                          ? productImageRaw
-                          : productImageRaw.startsWith('/')
-                            ? `/uploads${productImageRaw}`
-                            : `/uploads/${productImageRaw}`}`
-                    : null;
+                  const productImage = productImageRaw ? (productImageRaw.startsWith('http') ? productImageRaw : getImageUrl(productImageRaw)) : null;
 
                   return (
                     <div key={item.product.id} className="flex items-center justify-between text-sm">

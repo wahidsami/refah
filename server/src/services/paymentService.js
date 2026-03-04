@@ -144,12 +144,14 @@ class PaymentService {
         }
 
         // Get tenant from service or appointment
-        // For now, we'll need to get tenantId from somewhere
-        // Let's assume it's passed or we can get it from the booking context
         const tenantId = paymentData.tenantId;
 
-        // Calculate platform fee (2.5%)
-        const platformFee = parseFloat((amount * 0.025).toFixed(2));
+        // Use appointment's commission breakdown (from service.commissionRate) - proportional for split payments
+        const totalPrice = parseFloat(appointment.price || 0);
+        const platformFeeTotal = parseFloat(appointment.platformFee || 0);
+        const platformFee = totalPrice > 0
+            ? parseFloat((amount * (platformFeeTotal / totalPrice)).toFixed(2))
+            : parseFloat((amount * 0.025).toFixed(2));
         const tenantRevenue = parseFloat((amount - platformFee).toFixed(2));
 
         // Save payment method if requested
@@ -205,13 +207,33 @@ class PaymentService {
             : this.getCardBrand(cleanedCard) === 'mastercard' ? 'Mastercard'
             : 'Card';
 
-        // Update appointment status and payment information
-        await appointment.update({ 
+        // Update appointment status and payment information (totalPrice already set above)
+        const appointmentDepositAmount = parseFloat(appointment.depositAmount || 0);
+        const isDepositFlow = appointmentDepositAmount > 0;
+        const amountNum = parseFloat(amount);
+        const tolerance = 0.01; // 1 halala
+
+        const updatePayload = {
             status: 'confirmed',
-            paymentStatus: 'paid',
             paymentMethod: paymentMethodName,
             paidAt: new Date()
-        });
+        };
+
+        if (isDepositFlow && amountNum < totalPrice - tolerance && amountNum >= appointmentDepositAmount - tolerance) {
+            // Partial payment = deposit only
+            updatePayload.paymentStatus = 'deposit_paid';
+            updatePayload.totalPaid = amountNum;
+            updatePayload.depositPaid = true;
+            updatePayload.remainderPaid = false;
+        } else {
+            // Full payment (or no deposit flow)
+            updatePayload.paymentStatus = 'fully_paid';
+            updatePayload.totalPaid = totalPrice;
+            updatePayload.depositPaid = true;
+            updatePayload.remainderPaid = true;
+        }
+
+        await appointment.update(updatePayload);
 
         // Update platform user stats
         await db.PlatformUser.increment('totalSpent', {
@@ -306,8 +328,12 @@ class PaymentService {
 
         const tenantId = order.tenantId;
 
-        // Calculate platform fee (2.5%)
-        const platformFee = parseFloat((amount * 0.025).toFixed(2));
+        // Use order's stored platform fee (from products' commission rates) - order already has platformFee
+        const orderPlatformFee = parseFloat(order.platformFee || 0);
+        const orderTotal = parseFloat(order.totalAmount || amount);
+        const platformFee = orderTotal > 0 && orderPlatformFee > 0
+            ? parseFloat((amount * (orderPlatformFee / orderTotal)).toFixed(2))
+            : parseFloat((amount * 0.025).toFixed(2));
         const tenantRevenue = parseFloat((amount - platformFee).toFixed(2));
 
         // Save payment method if requested

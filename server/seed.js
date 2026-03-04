@@ -1,6 +1,9 @@
 const db = require('./src/models');
 
 async function seedDatabase() {
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('Seed must not run in production. Use migrations for schema; seed data manually if needed.');
+    }
     try {
         console.log('🌱 Starting database seeding...\n');
 

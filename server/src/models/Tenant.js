@@ -6,17 +6,22 @@ module.exports = (sequelize, DataTypes) => {
     class Tenant extends Model {
         static associate(models) {
             Tenant.hasMany(models.User, { foreignKey: 'tenantId' });
-            
+
             // Subscription relationship
             Tenant.hasOne(models.TenantSubscription, {
                 foreignKey: 'tenantId',
                 as: 'subscription'
             });
-            
+
             // Hot deals relationship
             Tenant.hasMany(models.HotDeal, {
                 foreignKey: 'tenantId',
                 as: 'hotDeals'
+            });
+
+            Tenant.hasMany(models.StaffPermission, {
+                foreignKey: 'tenantId',
+                as: 'staffPermissions'
             });
         }
     }
@@ -57,10 +62,11 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             unique: true
         },
-        // Business Type
+        // Business Type (supports multiple types as array)
         businessType: {
-            type: DataTypes.ENUM('salon', 'spa', 'barbershop', 'beauty_center', 'clinic', 'nail_studio', 'other'),
-            defaultValue: 'salon'
+            type: DataTypes.JSONB,
+            defaultValue: ['salon'],
+            comment: 'Array of business types, e.g. ["salon", "spa"]'
         },
         // Authentication
         password: {
@@ -432,7 +438,6 @@ module.exports = (sequelize, DataTypes) => {
         schema: 'public',
         indexes: [
             { fields: ['status'] },
-            { fields: ['businessType'] },
             { fields: ['city'] },
             { fields: ['plan'] },
             { fields: ['createdAt'] },
@@ -455,7 +460,7 @@ module.exports = (sequelize, DataTypes) => {
     });
 
     // Instance method to compare passwords
-    Tenant.prototype.comparePassword = async function(candidatePassword) {
+    Tenant.prototype.comparePassword = async function (candidatePassword) {
         const bcrypt = require('bcrypt');
         return await bcrypt.compare(candidatePassword, this.password);
     };

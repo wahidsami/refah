@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { AdminLayout } from "@/components/AdminLayout";
-import { adminApi } from "@/lib/api";
+import { adminApi, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -12,7 +12,7 @@ interface Tenant {
   name: string;
   nameAr?: string;
   slug: string;
-  businessType: string;
+  businessType: string[] | string;
   email: string;
   phone: string;
   whatsapp: string;
@@ -199,11 +199,11 @@ export default function ClientDetailsPage() {
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
           <div className="flex items-start gap-4">
             <div className="w-16 h-16 bg-primary-500/20 rounded-xl flex items-center justify-center text-3xl">
-              {tenant.businessType === "salon" && "💇"}
-              {tenant.businessType === "spa" && "🧖"}
-              {tenant.businessType === "barbershop" && "💈"}
-              {tenant.businessType === "beauty_center" && "💅"}
-              {!tenant.businessType && "🏢"}
+              {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "salon" && "💇"}
+              {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "spa" && "🧖"}
+              {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "barbershop" && "💈"}
+              {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "beauty_center" && "💅"}
+              {!tenant.businessType || (Array.isArray(tenant.businessType) && tenant.businessType.length === 0) ? "🏢" : null}
             </div>
             <div>
               <div className="flex items-center gap-3">
@@ -211,7 +211,9 @@ export default function ClientDetailsPage() {
                 <span className={`badge ${statusBadge.class}`}>{statusBadge.text}</span>
               </div>
               <p className="text-dark-400 mt-1 capitalize">
-                {tenant.businessType?.replace("_", " ")} • {tenant.city || "Location not set"}
+                {Array.isArray(tenant.businessType)
+                  ? tenant.businessType.map(t => t.replace("_", " ")).join(", ")
+                  : tenant.businessType?.replace("_", " ")} • {tenant.city || "Location not set"}
               </p>
               <p className="text-dark-500 text-sm mt-1">ID: {tenant.id}</p>
             </div>
@@ -293,11 +295,10 @@ export default function ClientDetailsPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`py-3 px-1 border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? "border-primary-500 text-primary-400"
-                    : "border-transparent text-dark-400 hover:text-dark-200"
-                }`}
+                className={`py-3 px-1 border-b-2 transition-colors ${activeTab === tab.id
+                  ? "border-primary-500 text-primary-400"
+                  : "border-transparent text-dark-400 hover:text-dark-200"
+                  }`}
               >
                 {tab.label}
               </button>
@@ -326,7 +327,9 @@ export default function ClientDetailsPage() {
                   <div>
                     <p className="text-dark-400 text-xs">Type</p>
                     <p className="text-white mt-1 capitalize">
-                      {tenant.businessType?.replace("_", " ") || "-"}
+                      {Array.isArray(tenant.businessType)
+                        ? tenant.businessType.map(t => t.replace("_", " ")).join(", ")
+                        : tenant.businessType?.replace("_", " ") || "-"}
                     </p>
                   </div>
                   <div>
@@ -337,9 +340,9 @@ export default function ClientDetailsPage() {
                 {tenant.logo && (
                   <div>
                     <p className="text-dark-400 text-xs mb-2">Business Logo</p>
-                    <img 
-                      src={`http://localhost:5000/uploads/${tenant.logo}`} 
-                      alt="Business Logo" 
+                    <img
+                      src={getImageUrl(tenant.logo)}
+                      alt="Business Logo"
                       className="h-16 w-16 object-cover rounded-lg border border-dark-600"
                       onError={(e) => {
                         (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%23333' width='100' height='100'/%3E%3Ctext fill='%23666' font-size='14' x='50%25' y='50%25' text-anchor='middle' dominant-baseline='middle'%3ENo Logo%3C/text%3E%3C/svg%3E";
@@ -389,9 +392,9 @@ export default function ClientDetailsPage() {
                 {(tenant as any).googleMapLink && (
                   <div>
                     <p className="text-dark-400 text-xs">Google Maps</p>
-                    <a 
-                      href={(tenant as any).googleMapLink} 
-                      target="_blank" 
+                    <a
+                      href={(tenant as any).googleMapLink}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-primary-400 hover:underline mt-1 text-sm"
                     >
@@ -473,19 +476,43 @@ export default function ClientDetailsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-dark-400 text-xs">Plan</p>
-                    <p className="text-white mt-1 capitalize">{tenant.plan?.replace("_", " ")}</p>
+                    <p className="text-white mt-1 capitalize">
+                      {(tenant as any).subscription?.package?.name
+                        || tenant.plan?.replace("_", " ")
+                        || "No plan"}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-dark-400 text-xs">Status</p>
-                    <p className="text-white mt-1">{statusBadge.text}</p>
+                    <p className="text-dark-400 text-xs">Subscription Status</p>
+                    <p className="text-white mt-1 capitalize">
+                      {(tenant as any).subscription?.status || "—"}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-dark-400 text-xs">Start Date</p>
-                    <p className="text-white mt-1">{formatDate(tenant.planStartDate)}</p>
+                    <p className="text-dark-400 text-xs">Billing Cycle</p>
+                    <p className="text-white mt-1 capitalize">
+                      {(tenant as any).subscription?.billingCycle?.replace("sixMonth", "6 Months") || "—"}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-dark-400 text-xs">End Date</p>
-                    <p className="text-white mt-1">{formatDate(tenant.planEndDate)}</p>
+                    <p className="text-dark-400 text-xs">Amount</p>
+                    <p className="text-white mt-1">
+                      {(tenant as any).subscription?.amount
+                        ? <><Currency amount={parseFloat((tenant as any).subscription.amount)} /></>
+                        : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-dark-400 text-xs">Period Start</p>
+                    <p className="text-white mt-1">
+                      {formatDate((tenant as any).subscription?.currentPeriodStart || tenant.planStartDate)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-dark-400 text-xs">Period End</p>
+                    <p className="text-white mt-1">
+                      {formatDate((tenant as any).subscription?.currentPeriodEnd || tenant.planEndDate)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-dark-400 text-xs">Registered</p>
@@ -509,18 +536,18 @@ export default function ClientDetailsPage() {
             <div className="card-body">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
-                  { 
-                    key: "crDocument", 
+                  {
+                    key: "crDocument",
                     label: "Commercial Registration",
                     number: (tenant as any).crNumber
                   },
-                  { 
-                    key: "taxDocument", 
+                  {
+                    key: "taxDocument",
                     label: "Tax Certificate",
                     number: (tenant as any).taxNumber
                   },
-                  { 
-                    key: "licenseDocument", 
+                  {
+                    key: "licenseDocument",
                     label: "Business License",
                     number: (tenant as any).licenseNumber
                   },
@@ -544,7 +571,7 @@ export default function ClientDetailsPage() {
                       )}
                       {hasDocument ? (
                         <a
-                          href={`http://localhost:5000/uploads/${documentPath}`}
+                          href={getImageUrl(documentPath)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="btn btn-secondary btn-sm w-full"

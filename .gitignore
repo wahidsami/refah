@@ -48,3 +48,13 @@ logs/*.pid
 *.tmp
 *.temp
 
+# Server: uploaded files (user content; persist on VPS, not in repo)
+server/uploads/
+
+# Server: Firebase and other service account keys (never commit)
+server/firebase-service-account.json
+*-service-account*.json
+
+# Debug session logs (Cursor)
+debug-*.log
+

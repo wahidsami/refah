@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { api } from "@/lib/api";
+import { api, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { PaymentModal } from "@/components/PaymentModal";
@@ -266,7 +266,7 @@ export function ProductPurchaseFlow({
                                         <div className="flex gap-4">
                                             {product.images && product.images.length > 0 && (
                                                 <img
-                                                    src={`http://localhost:5000${product.images[0].startsWith('/') ? product.images[0] : `/uploads/${product.images[0]}`}`}
+                                                    src={getImageUrl(product.images[0])}
                                                     alt={product.name_en}
                                                     className="w-20 h-20 rounded-lg object-cover"
                                                 />

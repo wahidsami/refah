@@ -477,3 +477,98 @@ exports.getCustomerAnalytics = async (req, res) => {
     }
 };
 
+/**
+ * Get full report: multiple sections in one request.
+ * GET /api/v1/tenant/reports/full?startDate=...&endDate=...&sections=overview,employees,services,...
+ */
+const tenantFinancialController = require('./tenantFinancialController');
+
+function runHandler(handler, req) {
+    return new Promise((resolve, reject) => {
+        const res = {
+            json(body) { resolve(body); },
+            status() { return this; },
+            send() { resolve(null); }
+        };
+        handler(req, res).catch(reject);
+    });
+}
+
+exports.getFullReport = async (req, res) => {
+    try {
+        const { startDate, endDate, sections: sectionsParam } = req.query;
+        const sections = typeof sectionsParam === 'string'
+            ? sectionsParam.split(',').map(s => s.trim()).filter(Boolean)
+            : Array.isArray(sectionsParam) ? sectionsParam.filter(Boolean) : [];
+
+        if (sections.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one section required' });
+        }
+
+        const q = { ...req.query, startDate, endDate };
+        const result = {};
+
+        const financialSections = ['overview', 'employees', 'services', 'products', 'daily'];
+        const reportSections = ['bookingTrends', 'servicePerformance', 'employeePerformance', 'peakHours', 'customerAnalytics'];
+
+        if (sections.includes('overview')) {
+            const r = await runHandler(tenantFinancialController.getFinancialOverview, req);
+            if (r && r.success && r.overview) result.overview = r.overview;
+        }
+        if (sections.includes('employees')) {
+            const r = await runHandler(tenantFinancialController.getEmployeeRevenue, req);
+            if (r && r.success) {
+                result.employees = r.employees;
+                result.employeeTotals = r.totals;
+            }
+        }
+        if (sections.includes('services')) {
+            const r = await runHandler(tenantFinancialController.getServiceRevenue, req);
+            if (r && r.success) {
+                result.services = r.services;
+                result.serviceTotals = r.totals;
+            }
+        }
+        if (sections.includes('products')) {
+            const r = await runHandler(tenantFinancialController.getProductRevenue, req);
+            if (r && r.success) {
+                result.products = r.products;
+                result.productTotals = r.totals;
+            }
+        }
+        if (sections.includes('daily')) {
+            const r = await runHandler(tenantFinancialController.getDailyRevenue, req);
+            if (r && r.success && r.dailyRevenue) result.dailyRevenue = r.dailyRevenue;
+        }
+        if (sections.includes('bookingTrends')) {
+            const r = await runHandler(exports.getBookingTrends, { ...req, query: { ...q, groupBy: 'day' } });
+            if (r && r.success && r.data) result.bookingTrends = r.data;
+        }
+        if (sections.includes('servicePerformance')) {
+            const r = await runHandler(exports.getServicePerformance, req);
+            if (r && r.success && r.data) result.servicePerformance = r.data;
+        }
+        if (sections.includes('employeePerformance')) {
+            const r = await runHandler(exports.getEmployeePerformance, req);
+            if (r && r.success && r.data) result.employeePerformance = r.data;
+        }
+        if (sections.includes('peakHours')) {
+            const r = await runHandler(exports.getPeakHoursAnalysis, req);
+            if (r && r.success && r.data) result.peakHours = r.data;
+        }
+        if (sections.includes('customerAnalytics')) {
+            const r = await runHandler(exports.getCustomerAnalytics, req);
+            if (r && r.success && r.data) result.customerAnalytics = r.data;
+        }
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Get full report error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to generate full report',
+            error: error.message
+        });
+    }
+};
+

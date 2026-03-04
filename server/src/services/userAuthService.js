@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../models');
+const { Op } = require('sequelize');
 
 // Use environment variables, with validation to happen at startup
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -49,7 +50,7 @@ class UserAuthService {
      * 3. Create PlatformUser with hashed password (bcrypt via model hook)
      * 4. Generate JWT access + refresh tokens
      * 5. Store refresh token in DB for later validation
-     * 6. Queue verification email (TODO)
+     * 6. Verification email: deferred (TODO when email provider ready); user can use app after registration.
      * 
      * Throws:
      * - "Email already registered" if email exists
@@ -67,7 +68,7 @@ class UserAuthService {
      * @returns {Object} Returns.tokens - {accessToken, refreshToken}
      */
     async register(userData) {
-        const { email, phone, password, firstName, lastName } = userData;
+        const { email, phone, password, firstName, lastName, avatar, dateOfBirth, gender } = userData;
 
         // Check if user already exists
         const existingUser = await db.PlatformUser.findOne({
@@ -95,7 +96,10 @@ class UserAuthService {
             password,
             firstName,
             lastName,
-            emailVerificationToken
+            emailVerificationToken,
+            profileImage: avatar || null,
+            dateOfBirth: dateOfBirth || null,
+            gender: gender || null
         });
 
         // Generate tokens
@@ -104,8 +108,7 @@ class UserAuthService {
         // Save refresh token
         await user.update({ refreshToken: tokens.refreshToken });
 
-        // TODO: Send verification email
-        // await emailService.sendVerificationEmail(user.email, emailVerificationToken);
+        // Deferred: send verification email when provider is configured (user can use app after registration).
 
         return {
             user: user.toSafeObject(),
@@ -193,7 +196,7 @@ class UserAuthService {
         const user = await db.PlatformUser.findByPk(userId);
 
         if (user) {
-            await user.update({ refreshToken: null });
+            await user.update({ refreshToken: null, fcm_token: null });
         }
 
         return { message: 'Logged out successfully' };
@@ -234,8 +237,7 @@ class UserAuthService {
 
         await user.update({ phoneVerificationCode: code });
 
-        // TODO: Send SMS with code
-        // await smsService.sendVerificationCode(user.phone, code);
+        // Deferred: send SMS when provider configured; code is stored and verifyPhone validates it.
 
         return { message: 'Verification code sent' };
     }
@@ -273,13 +275,30 @@ class UserAuthService {
             return { message: 'If the email exists, a reset link has been sent' };
         }
 
-        // Generate reset token
         const resetToken = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 3600000); // 1 hour
 
-        await user.update({ emailVerificationToken: resetToken });
+        await user.update({
+            emailVerificationToken: resetToken,
+            passwordResetExpires: expiresAt
+        });
 
-        // TODO: Send password reset email
-        // await emailService.sendPasswordResetEmail(user.email, resetToken);
+        const scheme = process.env.CUSTOMER_APP_SCHEME || 'refah';
+        const resetLink = `${scheme}://reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+
+        try {
+            const emailService = require('../utils/emailService');
+            console.log('[UserAuthService.requestPasswordReset] Sending reset email to:', user.email);
+            await emailService.sendPasswordResetEmail({
+                to: user.email,
+                userName: user.firstName || 'Customer',
+                resetLink,
+                expiryMinutes: 60
+            });
+            console.log('[UserAuthService.requestPasswordReset] Password reset email sent successfully to:', user.email);
+        } catch (err) {
+            console.error('[UserAuthService.requestPasswordReset] Email send failed for', user.email, ':', err.message);
+        }
 
         return { message: 'If the email exists, a reset link has been sent' };
     }
@@ -289,7 +308,10 @@ class UserAuthService {
      */
     async resetPassword(token, newPassword) {
         const user = await db.PlatformUser.findOne({
-            where: { emailVerificationToken: token }
+            where: {
+                emailVerificationToken: token,
+                passwordResetExpires: { [Op.gt]: new Date() }
+            }
         });
 
         if (!user) {
@@ -297,8 +319,9 @@ class UserAuthService {
         }
 
         await user.update({
-            password: newPassword, // Will be hashed by model hook
-            emailVerificationToken: null
+            password: newPassword,
+            emailVerificationToken: null,
+            passwordResetExpires: null
         });
 
         return { message: 'Password reset successfully' };
@@ -327,6 +350,15 @@ class UserAuthService {
             refreshToken,
             expiresIn: JWT_EXPIRES_IN
         };
+    }
+
+    /**
+     * Register FCM token for push notifications (customer app)
+     */
+    async registerFcmToken(userId, fcmToken) {
+        const user = await db.PlatformUser.findByPk(userId);
+        if (!user) return;
+        await user.update({ fcm_token: fcmToken || null });
     }
 
     /**

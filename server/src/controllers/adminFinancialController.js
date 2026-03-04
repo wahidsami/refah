@@ -85,6 +85,90 @@ exports.getCommissionByPlan = async (req, res) => {
   }
 };
 
+exports.getRevenueByType = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await FinancialService.getRevenueByType(startDate, endDate);
+    res.json(successResponse('Revenue by type retrieved', data));
+  } catch (error) {
+    console.error('Error fetching revenue by type:', error);
+    res.status(500).json(errorResponse('Failed to fetch revenue by type', error.message));
+  }
+};
+
+exports.getBillsSummary = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const data = await FinancialService.getBillsSummary(status || null);
+    res.json(successResponse('Bills summary retrieved', data));
+  } catch (error) {
+    console.error('Error fetching bills summary:', error);
+    res.status(500).json(errorResponse('Failed to fetch bills summary', error.message));
+  }
+};
+
+exports.getPlatformTransactions = async (req, res) => {
+  try {
+    const { startDate, endDate, tenantId, type, limit, offset } = req.query;
+    const data = await FinancialService.getPlatformTransactions({
+      startDate,
+      endDate,
+      tenantId,
+      type,
+      limit,
+      offset,
+    });
+    res.json(successResponse('Platform transactions retrieved', data));
+  } catch (error) {
+    console.error('Error fetching platform transactions:', error);
+    res.status(500).json(errorResponse('Failed to fetch platform transactions', error.message));
+  }
+};
+
+exports.getCommissionByPackage = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await FinancialService.getCommissionByPackage(startDate, endDate);
+    res.json(successResponse('Commission by package retrieved', data));
+  } catch (error) {
+    console.error('Error fetching commission by package:', error);
+    res.status(500).json(errorResponse('Failed to fetch commission by package', error.message));
+  }
+};
+
+exports.getGeneralReport = async (req, res) => {
+  try {
+    const { startDate, endDate, leaderboardLimit, monthlyLimit, employeesLimit } = req.query;
+    const data = await FinancialService.getGeneralReport(startDate, endDate, {
+      leaderboardLimit: leaderboardLimit ? parseInt(leaderboardLimit, 10) : 10,
+      monthlyLimit: monthlyLimit ? parseInt(monthlyLimit, 10) : 12,
+      employeesLimit: employeesLimit ? parseInt(employeesLimit, 10) : 10,
+    });
+    res.json(successResponse('General report retrieved', data));
+  } catch (error) {
+    console.error('Error fetching general report:', error);
+    res.status(500).json(errorResponse('Failed to fetch general report', error.message));
+  }
+};
+
+exports.getDetailedReport = async (req, res) => {
+  try {
+    const { startDate, endDate, tenantId, type, limit, offset } = req.query;
+    const data = await FinancialService.getDetailedReport({
+      startDate,
+      endDate,
+      tenantId,
+      type,
+      limit,
+      offset,
+    });
+    res.json(successResponse('Detailed report retrieved', data));
+  } catch (error) {
+    console.error('Error fetching detailed report:', error);
+    res.status(500).json(errorResponse('Failed to fetch detailed report', error.message));
+  }
+};
+
 exports.getTransactionDetails = async (req, res) => {
   try {
     const { tenantId, limit = 50, offset = 0 } = req.query;

@@ -9,7 +9,7 @@ const getDashboardStats = async (req, res) => {
         // Get date ranges
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
+
         const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
         const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
         const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
@@ -92,15 +92,14 @@ const getDashboardStats = async (req, res) => {
             }
         });
 
-        // Tenant by type breakdown
-        const tenantsByType = await db.Tenant.findAll({
-            attributes: [
-                'businessType',
-                [db.sequelize.fn('COUNT', db.sequelize.col('id')), 'count']
-            ],
-            where: { status: 'approved' },
-            group: ['businessType']
-        });
+        // Tenant by type breakdown (unnest JSONB array)
+        const [tenantsByTypeRaw] = await db.sequelize.query(`
+            SELECT bt AS "businessType", COUNT(DISTINCT t.id)::int AS count
+            FROM tenants t, jsonb_array_elements_text(t."businessType") AS bt
+            WHERE t.status = 'approved'
+            GROUP BY bt
+            ORDER BY count DESC
+        `);
 
         // Tenant by plan breakdown
         const tenantsByPlan = await db.Tenant.findAll({
@@ -113,7 +112,7 @@ const getDashboardStats = async (req, res) => {
         });
 
         // Calculate growth percentages
-        const tenantGrowth = newTenantsLastMonth > 0 
+        const tenantGrowth = newTenantsLastMonth > 0
             ? ((newTenantsThisMonth - newTenantsLastMonth) / newTenantsLastMonth * 100).toFixed(1)
             : newTenantsThisMonth > 0 ? 100 : 0;
 
@@ -156,9 +155,9 @@ const getDashboardStats = async (req, res) => {
                     growth: parseFloat(revenueGrowth)
                 },
                 breakdowns: {
-                    tenantsByType: tenantsByType.map(t => ({
+                    tenantsByType: tenantsByTypeRaw.map(t => ({
                         type: t.businessType,
-                        count: parseInt(t.getDataValue('count'))
+                        count: t.count
                     })),
                     tenantsByPlan: tenantsByPlan.map(t => ({
                         plan: t.plan,
@@ -210,7 +209,7 @@ const getRecentActivities = async (req, res) => {
 const getChartData = async (req, res) => {
     try {
         const { period = '30d' } = req.query;
-        
+
         // Calculate date range
         let startDate;
         switch (period) {

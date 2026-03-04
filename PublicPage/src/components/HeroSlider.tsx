@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useNavigate } from 'react-router-dom';
+import { getImageUrl } from '../lib/api';
 
 interface HeroSliderProps {
   onBookNowClick: () => void;
@@ -130,7 +131,7 @@ export const HeroSlider: React.FC<HeroSliderProps> = ({ onBookNowClick, onExplor
                 className="absolute inset-0 bg-cover bg-center"
                 style={{
                   backgroundImage: slide.backgroundImage
-                    ? `url(http://localhost:5000${slide.backgroundImage.startsWith('/uploads/') ? slide.backgroundImage : slide.backgroundImage.startsWith('/') ? `/uploads${slide.backgroundImage}` : `/uploads/${slide.backgroundImage}`})`
+                    ? `url(${getImageUrl(slide.backgroundImage)})`
                     : 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)'
                 }}
               >

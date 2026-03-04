@@ -1,21 +1,20 @@
 const db = require('../models');
 const { Op } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
  * List all platform users
  */
 const listUsers = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const {
-            page = 1,
-            limit = 20,
             search,
             isVerified,
             sortBy = 'createdAt',
             sortOrder = 'DESC'
         } = req.query;
 
-        const offset = (page - 1) * limit;
         const where = {};
 
         // Apply filters
@@ -37,8 +36,8 @@ const listUsers = async (req, res) => {
             where,
             attributes: { exclude: ['password'] },
             order: [[sortBy, sortOrder]],
-            limit: parseInt(limit),
-            offset: parseInt(offset)
+            limit,
+            offset
         });
 
         res.json({
@@ -46,13 +45,16 @@ const listUsers = async (req, res) => {
             users,
             pagination: {
                 total: count,
-                page: parseInt(page),
-                limit: parseInt(limit),
+                page,
+                limit,
                 totalPages: Math.ceil(count / limit)
             }
         });
 
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('List users error:', error);
         res.status(500).json({
             success: false,

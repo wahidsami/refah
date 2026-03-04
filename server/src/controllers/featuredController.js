@@ -79,10 +79,11 @@ const getFeaturedTenants = async (req, res) => {
 /**
  * Check if a specific tenant can be featured
  * GET /api/v1/tenant/featured-status
+ * Tenant id comes from authenticateTenant (req.tenantId), not req.user.
  */
 const getTenantFeaturedStatus = async (req, res) => {
     try {
-        const tenantId = req.user.tenantId;
+        const tenantId = req.tenantId;
 
         const featuredStatus = await promotionService.canBeFeatured(tenantId);
         const features = await promotionService.getTenantFeatures(tenantId);

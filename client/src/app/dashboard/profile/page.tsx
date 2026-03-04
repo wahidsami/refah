@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { api } from "@/lib/api";
+import { api, getImageUrl } from "@/lib/api";
 
 interface UserProfile {
     id: string;
@@ -200,7 +200,7 @@ function ProfileContent() {
                             <div className="relative">
                                 {profile?.profileImage ? (
                                     <img
-                                        src={`http://localhost:5000${profile.profileImage}`}
+                                        src={profile.profileImage ? getImageUrl(profile.profileImage) : ''}
                                         alt="Profile"
                                         className="w-24 h-24 rounded-full object-cover border-4 border-primary/20"
                                         onError={(e) => {

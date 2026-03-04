@@ -1,6 +1,6 @@
 import React from 'react';
 import { Clock, Star } from 'lucide-react';
-import { Service } from '../lib/api';
+import { Service, getImageUrl } from '../lib/api';
 import { Currency } from './Currency';
 
 interface ServiceCardProps {
@@ -16,14 +16,7 @@ export const ServiceCard: React.FC<ServiceCardProps> = ({ service, onClick }) =>
   // 1. Absolute: /uploads/tenants/services/filename
   // 2. Relative with slash: /tenants/services/filename
   // 3. Relative without slash: tenants/services/filename
-  const serviceImageRaw = service.image;
-  const serviceImage = serviceImageRaw 
-    ? `http://localhost:5000${serviceImageRaw.startsWith('/uploads/') 
-        ? serviceImageRaw 
-        : serviceImageRaw.startsWith('/') 
-          ? `/uploads${serviceImageRaw}` 
-          : `/uploads/${serviceImageRaw}`}`
-    : null;
+  const serviceImage = service.image ? getImageUrl(service.image) : null;
   
   const rating = typeof service.rating === 'number' ? service.rating.toFixed(1) : '5.0';
 

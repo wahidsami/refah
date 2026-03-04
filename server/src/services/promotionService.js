@@ -4,26 +4,18 @@
  */
 
 const db = require('../models');
+const { getActiveSubscriptionForTenant } = require('./tenantSubscriptionService');
 
 /**
- * Get tenant's active subscription with package details
+ * Get tenant's active subscription with package details (uses shared service)
  * @param {string} tenantId - Tenant UUID
  * @returns {Promise<Object|null>} Subscription with package or null
  */
 const getTenantSubscription = async (tenantId) => {
-    const subscription = await db.TenantSubscription.findOne({
-        where: {
-            tenantId,
-            status: 'active'
-        },
-        include: [{
-            model: db.SubscriptionPackage,
-            as: 'package',
-            where: { isActive: true }
-        }]
+    const result = await getActiveSubscriptionForTenant(tenantId, {
+        statuses: ['active', 'trial', 'APPROVED_FREE_ACTIVE']
     });
-
-    return subscription;
+    return result?.subscription || null;
 };
 
 /**
@@ -99,7 +91,7 @@ const canCreateHotDeal = async (tenantId) => {
         allowed: true,
         maxDeals,
         currentDeals,
-        autoApprove: limits.hotDealsAutoApprove || false
+        autoApprove: limits.hotDealsAutoApprove || limits.autoApproveHotDeals || false
     };
 };
 

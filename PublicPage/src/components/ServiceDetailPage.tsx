@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Clock, Star, DollarSign, ChevronLeft } from 'lucide-react';
 import { StaffCard } from './StaffCard';
 import { useTenant } from '../context/TenantContext';
-import { publicAPI, Service, Staff } from '../lib/api';
+import { getImageUrl, publicAPI, Service, Staff } from '../lib/api';
 import { Currency } from './Currency';
 
 interface ServiceDetailPageProps {
@@ -83,14 +83,7 @@ export const ServiceDetailPage: React.FC<ServiceDetailPageProps> = ({
   // 1. Absolute: /uploads/tenants/services/filename
   // 2. Relative with slash: /tenants/services/filename
   // 3. Relative without slash: tenants/services/filename
-  const serviceImageRaw = service.image;
-  const serviceImage = serviceImageRaw 
-    ? `http://localhost:5000${serviceImageRaw.startsWith('/uploads/') 
-        ? serviceImageRaw 
-        : serviceImageRaw.startsWith('/') 
-          ? `/uploads${serviceImageRaw}` 
-          : `/uploads/${serviceImageRaw}`}`
-    : null;
+  const serviceImage = service.image ? getImageUrl(service.image) : null;
   
   const rating = typeof service.rating === 'number' ? service.rating.toFixed(1) : '5.0';
 

@@ -12,6 +12,10 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'packageId',
                 as: 'package'
             });
+            TenantSubscription.hasMany(models.Bill, {
+                foreignKey: 'tenantSubscriptionId',
+                as: 'bills'
+            });
         }
 
         // Instance method: Check if subscription is active
@@ -21,9 +25,12 @@ module.exports = (sequelize, DataTypes) => {
 
         // Instance method: Check if in grace period
         isInGracePeriod() {
-            return this.status === 'expired' && 
-                   this.gracePeriodEnds && 
-                   new Date() <= this.gracePeriodEnds;
+            if (!this.gracePeriodEnds) return false;
+            const now = new Date();
+            if (this.status === 'APPROVED_PENDING_PAYMENT') {
+                return now <= this.gracePeriodEnds;
+            }
+            return this.status === 'expired' && now <= this.gracePeriodEnds;
         }
 
         // Instance method: Get days until renewal
@@ -78,10 +85,30 @@ module.exports = (sequelize, DataTypes) => {
         
         // Subscription Period
         status: {
-            type: DataTypes.ENUM('trial', 'active', 'past_due', 'expired', 'cancelled', 'suspended'),
+            type: DataTypes.ENUM(
+                'PENDING_APPROVAL',
+                'APPROVED_FREE_ACTIVE',
+                'APPROVED_PENDING_PAYMENT',
+                'trial',
+                'active',
+                'past_due',
+                'expired',
+                'cancelled',
+                'suspended'
+            ),
             allowNull: false,
             defaultValue: 'trial',
             comment: 'Current subscription status'
+        },
+        approvedAt: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            comment: 'When admin approved the subscription'
+        },
+        approvedByAdminId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            comment: 'SuperAdmin who approved'
         },
         trialEndsAt: {
             type: DataTypes.DATE,

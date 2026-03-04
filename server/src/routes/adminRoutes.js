@@ -8,6 +8,8 @@ const adminStatsController = require('../controllers/adminStatsController');
 const adminPackagesController = require('../controllers/adminPackagesController');
 const adminSettingsController = require('../controllers/adminSettingsController');
 const adminFinancialController = require('../controllers/adminFinancialController');
+const adminCategoryController = require('../controllers/adminCategoryController');
+const adminFeaturePricingController = require('../controllers/adminFeaturePricingController');
 
 // All routes require super admin authentication
 router.use(authenticateSuperAdmin);
@@ -19,6 +21,12 @@ router.get('/financial/tenants', adminFinancialController.getTenantFinancials);
 router.get('/financial/leaderboard', adminFinancialController.getTenantLeaderboard);
 router.get('/financial/monthly-comparison', adminFinancialController.getMonthlyComparison);
 router.get('/financial/commission-breakdown', adminFinancialController.getCommissionByPlan);
+router.get('/financial/revenue-by-type', adminFinancialController.getRevenueByType);
+router.get('/financial/bills-summary', adminFinancialController.getBillsSummary);
+router.get('/financial/transactions', adminFinancialController.getPlatformTransactions);
+router.get('/financial/commission-by-package', adminFinancialController.getCommissionByPackage);
+router.get('/financial/reports/general', adminFinancialController.getGeneralReport);
+router.get('/financial/reports/detailed', adminFinancialController.getDetailedReport);
 router.get('/financial/top-employees', adminFinancialController.getTopEmployees);
 router.get('/financial/transactions/:tenantId', adminFinancialController.getTransactionDetails);
 router.get('/financial/employee-metrics/:tenantId', adminFinancialController.getTenantEmployeeMetrics);
@@ -38,6 +46,7 @@ router.post('/tenants/:id/approve', requirePermission('tenants', 'approve'), adm
 router.post('/tenants/:id/reject', requirePermission('tenants', 'approve'), adminTenantsController.rejectTenant);
 router.post('/tenants/:id/suspend', requirePermission('tenants', 'edit'), adminTenantsController.suspendTenant);
 router.post('/tenants/:id/activate', requirePermission('tenants', 'edit'), adminTenantsController.activateTenant);
+router.delete('/tenants/:id', requirePermission('tenants', 'delete'), adminTenantsController.deleteTenant);
 
 // ===== USERS MANAGEMENT =====
 router.get('/users', requirePermission('users', 'view'), adminUsersController.listUsers);
@@ -57,6 +66,17 @@ router.delete('/packages/:id', requirePermission('settings', 'edit'), adminPacka
 // ===== GLOBAL SETTINGS =====
 router.get('/settings', requirePermission('settings', 'view'), adminSettingsController.getSettings);
 router.put('/settings', requirePermission('settings', 'edit'), adminSettingsController.updateSettings);
+
+// ===== SERVICE CATEGORIES =====
+router.get('/categories', requirePermission('settings', 'view'), adminCategoryController.listCategories);
+router.post('/categories', requirePermission('settings', 'edit'), adminCategoryController.createCategory);
+router.put('/categories/reorder', requirePermission('settings', 'edit'), adminCategoryController.reorderCategories);
+router.put('/categories/:id', requirePermission('settings', 'edit'), adminCategoryController.updateCategory);
+router.delete('/categories/:id', requirePermission('settings', 'edit'), adminCategoryController.deleteCategory);
+
+// ===== FEATURE PRICING =====
+router.get('/feature-pricing', requirePermission('settings', 'view'), adminFeaturePricingController.getFeaturePricings);
+router.put('/feature-pricing/:key', requirePermission('settings', 'edit'), adminFeaturePricingController.updateFeaturePricing);
 
 module.exports = router;
 

@@ -136,10 +136,19 @@ exports.register = async (req, res) => {
             });
         }
 
-        if (!businessType) {
+        // Parse businessType — accept both single string and array
+        let parsedBusinessType = businessType;
+        if (typeof businessType === 'string') {
+            try {
+                parsedBusinessType = JSON.parse(businessType);
+            } catch {
+                parsedBusinessType = [businessType]; // wrap single value in array
+            }
+        }
+        if (!Array.isArray(parsedBusinessType) || parsedBusinessType.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Business type is required'
+                message: 'At least one business type is required'
             });
         }
 
@@ -215,7 +224,7 @@ exports.register = async (req, res) => {
             nameAr: name_ar, // Legacy field
             slug: finalSlug,
             dbSchema,
-            businessType,
+            businessType: parsedBusinessType,
             password,
 
             // Contact Info
@@ -299,30 +308,21 @@ exports.register = async (req, res) => {
                     priceToPay = subscriptionPackage.annualPrice;
                 }
 
-                // Calculate period dates
+                // Placeholder period until admin approval; real period set on approval
                 const now = new Date();
-                let periodEnd = new Date(now);
-                if (selectedBillingPeriod === 'monthly') {
-                    periodEnd.setMonth(periodEnd.getMonth() + 1);
-                } else if (selectedBillingPeriod === 'sixMonth') {
-                    periodEnd.setMonth(periodEnd.getMonth() + 6);
-                } else if (selectedBillingPeriod === 'annual') {
-                    periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-                }
 
-                // Create subscription (status: 'trial' for pending approval, will be activated when approved)
+                // Create subscription (status: PENDING_APPROVAL; admin approval will set ACTIVE or APPROVED_PENDING_PAYMENT + Bill)
                 await db.TenantSubscription.create({
                     tenantId: tenant.id,
                     packageId: selectedPackageId,
-                    billingCycle: selectedBillingPeriod || 'monthly', // Fixed: billingCycle not billingPeriod
-                    amount: priceToPay, // Fixed: amount not pricePaid
-                    currency: 'SAR', // Added: required field
-                    status: 'trial', // Fixed: 'trial' instead of 'pending' (will be activated when tenant is approved)
-                    currentPeriodStart: now, // Added: required field
-                    currentPeriodEnd: periodEnd, // Added: required field
-                    nextBillingDate: periodEnd, // Added: for tracking
+                    billingCycle: selectedBillingPeriod || 'monthly',
+                    amount: priceToPay,
+                    currency: 'SAR',
+                    status: 'PENDING_APPROVAL',
+                    currentPeriodStart: now,
+                    currentPeriodEnd: now,
+                    nextBillingDate: null,
                     autoRenew: true
-                    // Removed: featuresSnapshot and limitsSnapshot (fields don't exist in model)
                 }, { transaction });
             }
         }
@@ -338,7 +338,7 @@ exports.register = async (req, res) => {
             userAgent: req.headers['user-agent'],
             details: {
                 businessName: name_en,
-                businessType,
+                businessType: parsedBusinessType,
                 email,
                 status: 'pending',
                 selectedPackage: subscriptionPackage?.name || 'None'

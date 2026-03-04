@@ -7,11 +7,15 @@
 const db = require('../models');
 const { Op } = require('sequelize');
 
+const logTimings = process.env.AVAILABILITY_TIMING_LOG === '1' || process.env.NODE_ENV !== 'production';
+
+function now() { return Date.now(); }
+
 class AvailabilityService {
     /**
      * Get available slots for a service
      * Service-first approach: slots are generated based on service duration + buffers
-     * 
+     *
      * @param {string} tenantId - Tenant ID
      * @param {string} serviceId - Service ID (required)
      * @param {string} staffId - Staff ID (optional, null = any staff)
@@ -19,31 +23,35 @@ class AvailabilityService {
      * @returns {Promise<Object>} Available slots with metadata
      */
     async getAvailableSlots(tenantId, { serviceId, staffId, date }) {
+        const t0 = now();
+        const timings = { fetchService: 0, fetchSettings: 0, fetchStaff: 0, fetchShifts: 0, fetchAppointments: 0, computeSlots: 0 };
+
         if (!serviceId || !date) {
             throw new Error('serviceId and date are required');
         }
 
-        // Get service (defines duration and buffers)
+        let t = now();
         const service = await db.Service.findByPk(serviceId);
+        if (logTimings) timings.fetchService = now() - t;
         if (!service) throw new Error('Service not found');
         if (service.tenantId !== tenantId) {
             throw new Error('Service does not belong to this tenant');
         }
 
-        // Get tenant settings for booking configuration
+        t = now();
         const tenantSettings = await this._getTenantSettings(tenantId);
-        const stepSize = tenantSettings.booking?.slotInterval || 15; // Default 15 minutes
+        if (logTimings) timings.fetchSettings = now() - t;
+        const stepSize = tenantSettings.booking?.slotInterval || 15;
         const timezone = tenantSettings.timezone || 'Asia/Riyadh';
 
-        // Service duration and buffers
-        const duration = service.duration || 30; // minutes
+        const duration = service.duration || 30;
         const bufferBefore = service.bufferBefore || tenantSettings.booking?.defaultBufferBefore || 0;
         const bufferAfter = service.bufferAfter || tenantSettings.booking?.defaultBufferAfter || 0;
-        const totalSlotLength = duration + bufferBefore + bufferAfter; // Total minutes
+        const totalSlotLength = duration + bufferBefore + bufferAfter;
 
-        // If staffId provided, get slots for that staff
+        let result;
         if (staffId) {
-            return await this._getSlotsForStaff(
+            result = await this._getSlotsForStaff(
                 tenantId,
                 serviceId,
                 staffId,
@@ -53,193 +61,268 @@ class AvailabilityService {
                 bufferAfter,
                 totalSlotLength,
                 stepSize,
-                timezone
+                timezone,
+                timings
+            );
+        } else {
+            result = await this._getSlotsForAnyStaffBatched(
+                tenantId,
+                serviceId,
+                date,
+                duration,
+                bufferBefore,
+                bufferAfter,
+                totalSlotLength,
+                stepSize,
+                timezone,
+                timings
             );
         }
 
-        // If no staffId, get slots for all eligible staff
-        return await this._getSlotsForAnyStaff(
-            tenantId,
-            serviceId,
-            date,
-            duration,
-            bufferBefore,
-            bufferAfter,
-            totalSlotLength,
-            stepSize,
-            timezone
-        );
+        if (logTimings) {
+            result._timings = { ...timings, totalMs: now() - t0 };
+        }
+        return result;
     }
 
     /**
      * Get available slots for a specific staff member
      * @private
      */
-    async _getSlotsForStaff(tenantId, serviceId, staffId, date, duration, bufferBefore, bufferAfter, totalSlotLength, stepSize, timezone = 'Asia/Riyadh') {
-        // Validate staff exists and can perform service
+    async _getSlotsForStaff(tenantId, serviceId, staffId, date, duration, bufferBefore, bufferAfter, totalSlotLength, stepSize, timezone = 'Asia/Riyadh', timings = {}) {
+        let t = now();
         const staff = await db.Staff.findByPk(staffId);
+        if (logTimings) timings.fetchStaff = (timings.fetchStaff || 0) + (now() - t);
         if (!staff) throw new Error('Staff not found');
-        if (staff.tenantId !== tenantId) {
-            throw new Error('Staff does not belong to this tenant');
-        }
+        if (staff.tenantId !== tenantId) throw new Error('Staff does not belong to this tenant');
         if (!staff.isActive) throw new Error('Staff is not active');
 
-        // Check if staff can perform this service
-        const canPerform = await db.ServiceEmployee.findOne({
-            where: { serviceId, staffId }
-        });
-        if (!canPerform) {
-            throw new Error('Staff cannot perform this service');
-        }
+        const canPerform = await db.ServiceEmployee.findOne({ where: { serviceId, staffId } });
+        if (!canPerform) throw new Error('Staff cannot perform this service');
 
-        // Calculate availability window
-        const availabilityWindow = await this._calculateAvailabilityWindow(
-            tenantId,
-            staffId,
-            date
-        );
+        t = now();
+        const availabilityWindow = await this._calculateAvailabilityWindow(tenantId, staffId, date);
+        if (logTimings) timings.fetchShifts = (timings.fetchShifts || 0) + (now() - t);
 
         if (!availabilityWindow || availabilityWindow.length === 0) {
             return {
                 slots: [],
                 metadata: {
-                    date,
-                    serviceId,
-                    staffId,
-                    serviceDuration: duration,
-                    bufferBefore,
-                    bufferAfter,
-                    totalSlotLength,
-                    stepSize,
-                    timezone: timezone,
-                    totalSlots: 0,
-                    availableSlots: 0,
-                    staffCount: 1
+                    date, serviceId, staffId, serviceDuration: duration, bufferBefore, bufferAfter,
+                    totalSlotLength, stepSize, timezone, totalSlots: 0, availableSlots: 0, staffCount: 1
                 }
             };
         }
 
-        // Get existing appointments for the day
+        t = now();
         const existingAppointments = await this._getExistingAppointments(staffId, date);
+        if (logTimings) timings.fetchAppointments = (timings.fetchAppointments || 0) + (now() - t);
 
-        // Generate slots for each availability window
+        t = now();
         const allSlots = [];
         for (const window of availabilityWindow) {
             const slots = this._generateSlots(
-                window.startTime,
-                window.endTime,
-                duration,
-                bufferBefore,
-                bufferAfter,
-                totalSlotLength,
-                stepSize,
-                existingAppointments
+                window.startTime, window.endTime, duration, bufferBefore, bufferAfter,
+                totalSlotLength, stepSize, existingAppointments
             );
             allSlots.push(...slots);
         }
-
-        // Sort slots by start time
         allSlots.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+        if (logTimings) timings.computeSlots = (timings.computeSlots || 0) + (now() - t);
 
         return {
             slots: allSlots,
             metadata: {
-                date,
-                serviceId,
-                staffId,
-                staffName: staff.name,
-                serviceDuration: duration,
-                bufferBefore,
-                bufferAfter,
-                totalSlotLength,
-                stepSize,
-                timezone: timezone,
-                totalSlots: allSlots.length,
-                availableSlots: allSlots.filter(s => s.available).length,
-                staffCount: 1
+                date, serviceId, staffId, staffName: staff.name, serviceDuration: duration,
+                bufferBefore, bufferAfter, totalSlotLength, stepSize, timezone,
+                totalSlots: allSlots.length, availableSlots: allSlots.filter(s => s.available).length, staffCount: 1
             }
         };
     }
 
     /**
-     * Get available slots for any eligible staff (for "Any Staff" selection)
+     * Get available slots for any eligible staff (batched: constant query count).
+     * Fetches staff, shifts, breaks, time-off, overrides, appointments in bulk then computes in memory.
      * @private
      */
-    async _getSlotsForAnyStaff(tenantId, serviceId, date, duration, bufferBefore, bufferAfter, totalSlotLength, stepSize, timezone = 'Asia/Riyadh') {
-        // Get all staff who can perform this service
-        const serviceEmployees = await db.ServiceEmployee.findAll({
-            where: { serviceId }
-        });
+    async _getSlotsForAnyStaffBatched(tenantId, serviceId, date, duration, bufferBefore, bufferAfter, totalSlotLength, stepSize, timezone, timings) {
+        const dateObj = new Date(date);
+        const dayOfWeek = dateObj.getDay();
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
 
-        if (serviceEmployees.length === 0) {
+        let t = now();
+        const serviceEmployees = await db.ServiceEmployee.findAll({ where: { serviceId } });
+        const staffIds = [...new Set(serviceEmployees.map(se => se.staffId))];
+        if (staffIds.length === 0) {
             return {
                 slots: [],
                 metadata: {
-                    date,
-                    serviceId,
-                    staffId: null,
-                    serviceDuration: duration,
-                    bufferBefore,
-                    bufferAfter,
-                    totalSlotLength,
-                    stepSize,
-                    timezone: timezone,
-                    totalSlots: 0,
-                    availableSlots: 0,
-                    staffCount: 0
+                    date, serviceId, staffId: null, serviceDuration: duration, bufferBefore, bufferAfter,
+                    totalSlotLength, stepSize, timezone, totalSlots: 0, availableSlots: 0, staffCount: 0
                 }
             };
         }
+        const [staffMembers, tenant] = await Promise.all([
+            db.Staff.findAll({
+                where: { id: { [Op.in]: staffIds }, tenantId, isActive: true },
+                attributes: ['id', 'name']
+            }),
+            db.Tenant.findByPk(tenantId)
+        ]);
+        const staffIdsFiltered = staffMembers.map(s => s.id);
+        if (logTimings) timings.fetchStaff = now() - t;
 
-        const staffIds = serviceEmployees.map(se => se.staffId);
-        const staffMembers = await db.Staff.findAll({
-            where: {
-                id: { [Op.in]: staffIds },
-                tenantId,
-                isActive: true
-            }
-        });
+        // Batched queries for availability (indexes documented in AVAILABILITY_OPTIMIZATION.md):
+        // 1) staff_shifts date:   WHERE staff_id IN (?), specific_date = ?, is_active = true, is_recurring = false
+        // 2) staff_shifts recur:  WHERE staff_id IN (?), day_of_week = ?, is_recurring = true, is_active = true, start_date, end_date range
+        // 3) staff_schedules:     WHERE staffId IN (?), dayOfWeek = ?, isAvailable = true
+        // 4) staff_breaks date:   WHERE staff_id IN (?), specific_date = ?, is_active = true, is_recurring = false
+        // 5) staff_breaks recur:  WHERE staff_id IN (?), day_of_week = ?, is_recurring = true, is_active = true, start_date, end_date range
+        // 6) staff_time_off:      WHERE staff_id IN (?), is_approved = true, start_date <= ?, end_date >= ?
+        // 7) staff_schedule_overrides: WHERE staff_id IN (?), date = ?
+        // 8) appointments:       WHERE tenantId = ?, staffId IN (?), startTime BETWEEN ?, status NOT IN ('cancelled','no_show')
+        t = now();
+        const [
+            dateSpecificShiftsAll,
+            recurringShiftsAll,
+            legacySchedulesAll,
+            dateBreaksAll,
+            recurringBreaksAll,
+            timeOffAll,
+            overridesAll,
+            appointmentsAll
+        ] = await Promise.all([
+            db.StaffShift.findAll({
+                where: {
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    specificDate: date,
+                    isActive: true,
+                    isRecurring: false
+                }
+            }),
+            db.StaffShift.findAll({
+                where: {
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    dayOfWeek,
+                    isRecurring: true,
+                    isActive: true,
+                    [Op.and]: [
+                        { [Op.or]: [{ startDate: null }, { startDate: { [Op.lte]: date } }] },
+                        { [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: date } }] }
+                    ]
+                }
+            }),
+            db.StaffSchedule.findAll({
+                where: { staffId: { [Op.in]: staffIdsFiltered }, dayOfWeek, isAvailable: true }
+            }),
+            db.StaffBreak.findAll({
+                where: {
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    specificDate: date,
+                    isActive: true,
+                    isRecurring: false
+                }
+            }),
+            db.StaffBreak.findAll({
+                where: {
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    dayOfWeek,
+                    isRecurring: true,
+                    isActive: true,
+                    [Op.and]: [
+                        { [Op.or]: [{ startDate: null }, { startDate: { [Op.lte]: date } }] },
+                        { [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: date } }] }
+                    ]
+                }
+            }),
+            db.StaffTimeOff.findAll({
+                where: {
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    isApproved: true,
+                    startDate: { [Op.lte]: date },
+                    endDate: { [Op.gte]: date }
+                }
+            }),
+            db.StaffScheduleOverride.findAll({
+                where: { staffId: { [Op.in]: staffIdsFiltered }, date }
+            }),
+            db.Appointment.findAll({
+                where: {
+                    tenantId,
+                    staffId: { [Op.in]: staffIdsFiltered },
+                    startTime: { [Op.between]: [startOfDay, endOfDay] },
+                    status: { [Op.notIn]: ['cancelled', 'no_show'] }
+                },
+                order: [['startTime', 'ASC']],
+                raw: true
+            })
+        ]);
+        if (logTimings) {
+            timings.fetchShifts = now() - t;
+            timings.fetchAppointments = 0;
+        }
 
-        // Get slots for each staff member
+        const shiftsByStaff = new Map();
+        for (const s of dateSpecificShiftsAll) shiftsByStaff.set(s.staffId, [...(shiftsByStaff.get(s.staffId) || []), s]);
+        for (const s of recurringShiftsAll) shiftsByStaff.set(s.staffId, [...(shiftsByStaff.get(s.staffId) || []), s]);
+        const legacyByStaff = new Map();
+        for (const s of legacySchedulesAll) legacyByStaff.set(s.staffId, s);
+        const breaksByStaff = new Map();
+        for (const b of dateBreaksAll) breaksByStaff.set(b.staffId, [...(breaksByStaff.get(b.staffId) || []), b]);
+        for (const b of recurringBreaksAll) breaksByStaff.set(b.staffId, [...(breaksByStaff.get(b.staffId) || []), b]);
+        const timeOffByStaff = new Map();
+        for (const t of timeOffAll) timeOffByStaff.set(t.staffId, [...(timeOffByStaff.get(t.staffId) || []), t]);
+        const overridesByStaff = new Map();
+        for (const o of overridesAll) overridesByStaff.set(o.staffId, [...(overridesByStaff.get(o.staffId) || []), o]);
+        const appointmentsByStaff = new Map();
+        for (const a of appointmentsAll) appointmentsByStaff.set(a.staffId, [...(appointmentsByStaff.get(a.staffId) || []), a]);
+
+        const tenantHours = tenant ? this._parseBusinessHours(tenant.workingHours, dayOfWeek) : null;
+
+        t = now();
         const slotsByStaff = [];
         for (const staff of staffMembers) {
+            const sid = staff.id;
+            const shifts = shiftsByStaff.get(sid) || [];
+            const legacy = legacyByStaff.get(sid);
+            const breaks = (breaksByStaff.get(sid) || []).map(b => ({
+                startTime: this._combineDateAndTime(date, b.startTime),
+                endTime: this._combineDateAndTime(date, b.endTime)
+            }));
+            const timeOff = (timeOffByStaff.get(sid) || []).map(record => ({
+                startTime: new Date(record.startDate),
+                endTime: new Date(new Date(record.endDate).getTime() + 24 * 60 * 60 * 1000)
+            }));
+            const overridesList = overridesByStaff.get(sid) || [];
+            let availableWindow;
             try {
-                const result = await this._getSlotsForStaff(
-                    tenantId,
-                    serviceId,
-                    staff.id,
-                    date,
-                    duration,
-                    bufferBefore,
-                    bufferAfter,
-                    totalSlotLength,
-                    stepSize,
-                    timezone
+                availableWindow = this._buildAvailabilityWindowFromData(
+                    date, tenantHours, shifts, legacy, breaks, timeOff, overridesList
                 );
-                
-                // Add staff info to each slot
-                result.slots.forEach(slot => {
+            } catch (err) {
+                if (process.env.NODE_ENV !== 'test' && process.env.AVAILABILITY_DEBUG_LOG === '1') {
+                    console.info(`Skipping staff ${sid}:`, err.message);
+                }
+                continue;
+            }
+            if (!availableWindow || availableWindow.length === 0) continue;
+            const existingAppointments = appointmentsByStaff.get(sid) || [];
+            for (const window of availableWindow) {
+                const slots = this._generateSlots(
+                    window.startTime, window.endTime, duration, bufferBefore, bufferAfter,
+                    totalSlotLength, stepSize, existingAppointments
+                );
+                slots.forEach(slot => {
                     slot.staffId = staff.id;
                     slot.staffName = staff.name;
                 });
-                
-                slotsByStaff.push(...result.slots);
-            } catch (error) {
-                // Skip staff if error (e.g., no schedule)
-                console.warn(`Skipping staff ${staff.id}: ${error.message}`);
+                slotsByStaff.push(...slots);
             }
         }
-
-        // Sort by time, then by staff rating (best first)
-        slotsByStaff.sort((a, b) => {
-            const timeDiff = new Date(a.startTime) - new Date(b.startTime);
-            if (timeDiff !== 0) return timeDiff;
-            // If same time, prefer higher rated staff (would need to join staff data)
-            return 0;
-        });
-
-        // Remove duplicates (same time slot from multiple staff)
-        // Keep the first one (could enhance to prefer best staff)
+        slotsByStaff.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
         const uniqueSlots = [];
         const seenTimes = new Set();
         for (const slot of slotsByStaff) {
@@ -249,24 +332,48 @@ class AvailabilityService {
                 uniqueSlots.push(slot);
             }
         }
+        if (logTimings) timings.computeSlots = now() - t;
 
         return {
             slots: uniqueSlots,
             metadata: {
-                date,
-                serviceId,
-                staffId: null,
-                serviceDuration: duration,
-                bufferBefore,
-                bufferAfter,
-                totalSlotLength,
-                stepSize,
-                timezone: timezone,
+                date, serviceId, staffId: null, serviceDuration: duration, bufferBefore, bufferAfter,
+                totalSlotLength, stepSize, timezone,
                 totalSlots: uniqueSlots.length,
                 availableSlots: uniqueSlots.filter(s => s.available).length,
                 staffCount: staffMembers.length
             }
         };
+    }
+
+    /**
+     * Build availability windows for one staff from pre-fetched data (sync, no DB).
+     * @private
+     */
+    _buildAvailabilityWindowFromData(date, tenantHours, shifts, legacySchedule, breaks, timeOff, overrides) {
+        let availableWindow = [];
+        if (shifts.length > 0) {
+            availableWindow = shifts.map(shift => ({
+                startTime: this._combineDateAndTime(date, shift.startTime),
+                endTime: this._combineDateAndTime(date, shift.endTime)
+            }));
+        } else if (legacySchedule) {
+            availableWindow = [{
+                startTime: this._combineDateAndTime(date, legacySchedule.startTime),
+                endTime: this._combineDateAndTime(date, legacySchedule.endTime)
+            }];
+        } else {
+            return [];
+        }
+        if (tenantHours) {
+            const tenantStart = this._combineDateAndTime(date, tenantHours.start);
+            const tenantEnd = this._combineDateAndTime(date, tenantHours.end);
+            availableWindow = this._intersectWindows(availableWindow, [{ startTime: tenantStart, endTime: tenantEnd }]);
+        }
+        availableWindow = this._subtractWindows(availableWindow, breaks);
+        availableWindow = this._subtractWindows(availableWindow, timeOff);
+        availableWindow = this._applyOverrides(availableWindow, overrides);
+        return availableWindow;
     }
 
     /**
@@ -384,13 +491,15 @@ class AvailabilityService {
 
             return availableWindow;
         } catch (error) {
-            console.error('Error in _calculateAvailabilityWindow:', {
-                tenantId,
-                staffId,
-                date,
-                error: error.message,
-                stack: error.stack
-            });
+            if (process.env.NODE_ENV !== 'test') {
+                console.error('Error in _calculateAvailabilityWindow:', {
+                    tenantId,
+                    staffId,
+                    date,
+                    error: error.message,
+                    stack: error.stack
+                });
+            }
             throw error;
         }
     }
@@ -507,7 +616,9 @@ class AvailabilityService {
                 };
             }
         } catch (error) {
-            console.warn('Failed to load tenant settings, using defaults:', error.message);
+            if (process.env.NODE_ENV !== 'test' && process.env.AVAILABILITY_DEBUG_LOG === '1') {
+                console.info('Failed to load tenant settings, using defaults:', error.message);
+            }
         }
 
         // Return defaults if no settings found
@@ -595,7 +706,9 @@ class AvailabilityService {
             
             return result;
         } catch (error) {
-            console.error('Error in _combineDateAndTime:', { date, time, error: error.message });
+            if (process.env.NODE_ENV !== 'test') {
+                console.error('Error in _combineDateAndTime:', { date, time, error: error.message });
+            }
             throw new Error(`Failed to combine date and time: ${error.message}`);
         }
     }
@@ -803,40 +916,51 @@ class AvailabilityService {
     }
     /**
      * Get the next available slot for a service and staff
-     * Searches up to daysToSearch days in the future
-     * 
+     * Searches up to daysToSearch days (capped by NEXT_AVAILABLE_MAX_DAYS). Exits on first found slot.
+     *
      * @param {string} tenantId - Tenant ID
      * @param {string} serviceId - Service ID (required)
      * @param {string} staffId - Staff ID (required)
-     * @param {number} daysToSearch - Number of days to search ahead (default: 14)
-     * @returns {Promise<Object>} Next available slot or null
+     * @param {number} daysToSearch - Number of days to search ahead (capped by env)
+     * @returns {Promise<Object>} Next available slot or clear "no slot in window" response
      */
     async getNextAvailableSlot(tenantId, { serviceId, staffId, daysToSearch = 14 }) {
         if (!serviceId || !staffId) {
             throw new Error('serviceId and staffId are required');
         }
 
+        const rawMax = parseInt(process.env.NEXT_AVAILABLE_MAX_DAYS || '14', 10);
+        const maxDays = Math.min(60, Math.max(1, Number.isNaN(rawMax) ? 14 : rawMax));
+        const cappedDays = Math.min(Math.max(1, Number(daysToSearch) || 14), maxDays);
+
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Search each day
-        for (let i = 0; i < daysToSearch; i++) {
+        let daysSearched = 0;
+        for (let i = 0; i < cappedDays; i++) {
+            daysSearched = i + 1;
             const searchDate = new Date(today);
             searchDate.setDate(today.getDate() + i);
             const dateString = searchDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
             try {
-                // Get available slots for this date
                 const result = await this.getAvailableSlots(tenantId, {
                     serviceId,
                     staffId,
                     date: dateString
                 });
 
-                // Find first available slot
                 const availableSlot = result.slots.find(slot => slot.available);
-                
                 if (availableSlot) {
+                    if (process.env.AVAILABILITY_TIMING_LOG === '1') {
+                        console.log(JSON.stringify({
+                            event: 'next_available_slot',
+                            daysSearched,
+                            found: true,
+                            date: dateString,
+                            daysAhead: i
+                        }));
+                    }
                     return {
                         success: true,
                         slot: availableSlot,
@@ -846,18 +970,32 @@ class AvailabilityService {
                     };
                 }
             } catch (error) {
-                console.error(`Error checking date ${dateString}:`, error.message);
-                // Continue to next day
+                if (process.env.NODE_ENV === 'test') {
+                    // expected control flow (e.g. service not found, wrong tenant); no log
+                } else if (process.env.AVAILABILITY_DEBUG_LOG === '1' && /not found|does not belong|invalid/i.test(error.message)) {
+                    console.info(`Availability check ${dateString}:`, error.message);
+                } else if (process.env.AVAILABILITY_DEBUG_LOG !== '1' && /not found|does not belong|invalid/i.test(error.message)) {
+                    // validation/branch only; no log unless debug flag set
+                } else {
+                    console.error(`Error checking date ${dateString}:`, error.message);
+                }
             }
         }
 
-        // No available slots found
+        if (process.env.AVAILABILITY_TIMING_LOG === '1') {
+            console.log(JSON.stringify({
+                event: 'next_available_slot',
+                daysSearched,
+                found: false
+            }));
+        }
         return {
             success: false,
             slot: null,
             date: null,
             daysAhead: null,
-            message: `No available slots found in the next ${daysToSearch} days`
+            searchedDays: cappedDays,
+            message: `No availability in next ${cappedDays} days.`
         };
     }
 }

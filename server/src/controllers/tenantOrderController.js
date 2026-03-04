@@ -6,6 +6,7 @@
 const db = require('../models');
 const { Op } = require('sequelize');
 const orderService = require('../services/orderService');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
  * Get all orders for tenant
@@ -19,10 +20,10 @@ exports.getOrders = async (req, res) => {
             paymentStatus, 
             startDate, 
             endDate,
-            search,
-            page = 1,
-            limit = 20
+            search
         } = req.query;
+
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
 
         // Build where clause
         const where = { tenantId };
@@ -76,9 +77,6 @@ exports.getOrders = async (req, res) => {
             }
         }
 
-        // Calculate pagination
-        const offset = (parseInt(page) - 1) * parseInt(limit);
-
         // Get orders with pagination
         const { count, rows: orders } = await db.Order.findAndCountAll({
             where,
@@ -104,8 +102,8 @@ exports.getOrders = async (req, res) => {
                 }
             ],
             order: [['createdAt', 'DESC']],
-            limit: parseInt(limit),
-            offset: offset
+            limit,
+            offset
         });
 
         // Calculate totals
@@ -125,9 +123,9 @@ exports.getOrders = async (req, res) => {
             orders,
             pagination: {
                 total: count,
-                page: parseInt(page),
-                limit: parseInt(limit),
-                totalPages: Math.ceil(count / parseInt(limit))
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
             },
             stats: {
                 total: totalOrders,
@@ -137,6 +135,9 @@ exports.getOrders = async (req, res) => {
             }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get tenant orders error:', error);
         res.status(500).json({
             success: false,

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/contexts/AuthContext";
-import { api, Service, Staff, Tenant } from "@/lib/api";
+import { api, getImageUrl, PUBLIC_PAGE_URL, Service, Staff, Tenant } from "@/lib/api";
 import Link from "next/link";
 import { Currency } from "@/components/Currency";
 
@@ -211,7 +211,7 @@ function BookingContent() {
 
     function handleViewServiceDetails(service: Service) {
         if (tenant?.slug) {
-            window.open(`http://localhost:3004/t/${tenant.slug}/services/${service.id}`, "_blank");
+            window.open(`${PUBLIC_PAGE_URL}/t/${tenant.slug}/services/${service.id}`, "_blank");
         }
     }
 
@@ -346,9 +346,7 @@ function BookingContent() {
                         <div className="flex items-center gap-4 mb-4">
                             {tenant.logo && (
                                 <img
-                                    src={tenant.logo.startsWith('/')
-                                        ? `http://localhost:5000${tenant.logo}`
-                                        : `http://localhost:5000/uploads/${tenant.logo}`}
+                                    src={getImageUrl(tenant.logo)}
                                     alt={tenant.name}
                                     className="w-12 h-12 rounded-lg object-cover border border-gray-200"
                                     onError={(e) => {
@@ -517,7 +515,7 @@ function BookingContent() {
                                             <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-200 flex-shrink-0">
                                                 {(member.image || member.photo) ? (
                                                     <img
-                                                        src={`http://localhost:5000/uploads/${member.image || member.photo}`}
+                                                        src={getImageUrl(member.image || member.photo)}
                                                         alt={member.name}
                                                         className="w-full h-full object-cover"
                                                     />

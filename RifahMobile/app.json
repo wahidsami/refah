@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Refah - Beauty & Wellness",
+    "slug": "refah-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "refah",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.refah.mobile",
+      "buildNumber": "1.0.0"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.refah.mobile",
+      "googleServicesFile": "./google-services.json",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
+      "usesCleartextTraffic": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "locales": {
+      "ar": "./locales/ar.json",
+      "en": "./locales/en.json"
+    },
+    "supportsRTL": true,
+    "plugins": [
+      "expo-localization",
+      "expo-font",
+      "expo-notifications"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "412b0087-4404-421d-aaf3-a44b474fed0b"
+      },
+      "serverUrl": "http://192.168.0.101:5000"
+    },
+    "owner": "waheedaami",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/412b0087-4404-421d-aaf3-a44b474fed0b"
+    }
+  }
+}

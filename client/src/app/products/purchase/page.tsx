@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
-import { api } from "@/lib/api";
+import { api, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import Link from "next/link";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -271,7 +271,7 @@ function PurchaseContent() {
                             <div className="flex gap-4">
                                 {product.images && product.images.length > 0 && (
                                     <img
-                                        src={`http://localhost:5000${product.images[0].startsWith('/') ? product.images[0] : `/uploads/${product.images[0]}`}`}
+                                        src={getImageUrl(product.images[0])}
                                         alt={product.name_en}
                                         className="w-24 h-24 rounded-lg object-cover"
                                     />

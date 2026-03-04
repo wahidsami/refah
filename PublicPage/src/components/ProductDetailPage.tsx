@@ -4,7 +4,7 @@ import { Star, ShoppingCart, Package, Minus, Plus, ChevronLeft } from 'lucide-re
 import { ProductCard } from './ProductCard';
 import { useCart } from '../context/CartContext';
 import { useTenant } from '../context/TenantContext';
-import { publicAPI, Product } from '../lib/api';
+import { getImageUrl, publicAPI, Product } from '../lib/api';
 import { Currency } from './Currency';
 
 export const ProductDetailPage: React.FC = () => {
@@ -82,7 +82,7 @@ export const ProductDetailPage: React.FC = () => {
 
   const productName = product.name_en || product.name_ar || 'Product';
   const productDescription = product.description_en || product.description_ar || '';
-  const productImages = product.images?.map(img => `http://localhost:5000${img}`) || [];
+  const productImages = product.images?.map(img => getImageUrl(img)) || [];
   const productIngredients = product.ingredients_en || product.ingredients_ar || '';
   const productHowToUse = product.howToUse_en || product.howToUse_ar || '';
   const productFeatures = product.features_en || product.features_ar || '';
@@ -293,7 +293,7 @@ export const ProductDetailPage: React.FC = () => {
                       name: relatedProduct.name_en || relatedProduct.name_ar || 'Product',
                       price: relatedProduct.price,
                       image: relatedProduct.images && relatedProduct.images.length > 0 
-                        ? `http://localhost:5000${relatedProduct.images[0]}` 
+                        ? getImageUrl(relatedProduct.images[0]) 
                         : null,
                     });
                   }}

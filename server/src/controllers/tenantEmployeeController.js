@@ -8,17 +8,18 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { Op } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 // Configure multer for employee photo uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadPath = path.join(__dirname, '../../uploads/tenants/employees');
-        
+
         // Create directory if it doesn't exist
         if (!fs.existsSync(uploadPath)) {
             fs.mkdirSync(uploadPath, { recursive: true });
         }
-        
+
         cb(null, uploadPath);
     },
     filename: function (req, file, cb) {
@@ -55,11 +56,12 @@ exports.uploadPhoto = upload.single('photo');
  */
 exports.getEmployees = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const tenantId = req.tenantId;
         const { isActive, search } = req.query;
 
         const where = { tenantId };
-        
+
         if (isActive !== undefined) {
             where.isActive = isActive === 'true';
         }
@@ -72,7 +74,7 @@ exports.getEmployees = async (req, res) => {
             ];
         }
 
-        const employees = await db.Staff.findAll({
+        const { count, rows: employees } = await db.Staff.findAndCountAll({
             where,
             order: [['name', 'ASC']],
             attributes: [
@@ -91,17 +93,29 @@ exports.getEmployees = async (req, res) => {
                 'commissionRate',
                 'workingHours',
                 'isActive',
+                'app_enabled',
                 'createdAt',
                 'updatedAt'
-            ]
+            ],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
             employees,
-            count: employees.length
+            count: employees.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get employees error:', error);
         res.status(500).json({
             success: false,
@@ -141,6 +155,7 @@ exports.getEmployee = async (req, res) => {
                 'commissionRate',
                 'workingHours',
                 'isActive',
+                'app_enabled',
                 'createdAt',
                 'updatedAt'
             ]
@@ -182,7 +197,7 @@ exports.createEmployee = async (req, res) => {
     const transaction = await db.sequelize.transaction();
     try {
         const tenantId = req.tenantId;
-        
+
         // Check if tenantId exists (authentication check)
         if (!tenantId) {
             await transaction.rollback();
@@ -191,14 +206,14 @@ exports.createEmployee = async (req, res) => {
                 message: 'Authentication required. Please login again.'
             });
         }
-        
+
         // Log raw request data FIRST - CRITICAL for debugging
         console.log('=== RAW REQUEST DATA ===');
         console.log('req.body.skills:', req.body.skills);
         console.log('req.body.skills type:', typeof req.body.skills);
         // Note: workingHours is deprecated - use Schedules section instead
         // Still accept it for backward compatibility but don't use it
-        
+
         let {
             name,
             email,
@@ -212,11 +227,11 @@ exports.createEmployee = async (req, res) => {
             workingHours, // Deprecated - kept for backward compatibility
             isActive = true
         } = req.body;
-        
+
         console.log('=== EXTRACTED VALUES ===');
         console.log('skills variable:', skills);
         console.log('skills variable type:', typeof skills);
-        
+
         // Debug log in development
         if (process.env.NODE_ENV === 'development') {
             console.log('Create employee request:', {
@@ -234,6 +249,20 @@ exports.createEmployee = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Employee name is required'
+            });
+        }
+
+        // Enforce maxStaff limit
+        const { checkResourceLimit } = require('../utils/tenantLimitsUtil');
+        const limitCheck = await checkResourceLimit(tenantId, 'maxStaff', async () => {
+            return await db.Staff.count({ where: { tenantId } });
+        });
+
+        if (!limitCheck.allowed) {
+            await transaction.rollback();
+            return res.status(403).json({
+                success: false,
+                message: `Upgrade your subscription to add more staff. Current plan (${limitCheck.packageName}) limit: ${limitCheck.limit}`
             });
         }
 
@@ -258,14 +287,14 @@ exports.createEmployee = async (req, res) => {
                     // Try direct JSON parse first
                     let parsed = JSON.parse(skills);
                     console.log('✅ First parse attempt result:', parsed, 'Type:', typeof parsed, 'IsArray:', Array.isArray(parsed));
-                    
+
                     // If parsed result is still a string, parse again (double-encoded)
                     if (typeof parsed === 'string') {
                         console.log('⚠️ Parsed result is still a string, parsing again...');
                         parsed = JSON.parse(parsed);
                         console.log('✅ Second parse result:', parsed, 'Type:', typeof parsed, 'IsArray:', Array.isArray(parsed));
                     }
-                    
+
                     if (Array.isArray(parsed)) {
                         skillsArray = parsed;
                         console.log('✅ Successfully parsed to array:', skillsArray);
@@ -280,7 +309,7 @@ exports.createEmployee = async (req, res) => {
                     try {
                         let cleaned = skills.trim();
                         // Remove outer quotes if present
-                        if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
+                        if ((cleaned.startsWith('"') && cleaned.endsWith('"')) ||
                             (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
                             cleaned = cleaned.slice(1, -1);
                             console.log('🔍 Removed outer quotes, cleaned:', cleaned);
@@ -303,13 +332,13 @@ exports.createEmployee = async (req, res) => {
                 console.log('✅ Skills already an array:', skillsArray);
             }
         }
-        
+
         // Final validation - ensure it's a proper JavaScript array
         if (!Array.isArray(skillsArray)) {
             console.error('❌ CRITICAL: skillsArray is not an array! Type:', typeof skillsArray, 'Value:', skillsArray);
             skillsArray = [];
         }
-        
+
         // Debug log - ALWAYS show this
         console.log('📊 FINAL Skills parsing result:', {
             original: skills,
@@ -350,7 +379,7 @@ exports.createEmployee = async (req, res) => {
                 skillsArray = [];
             }
         }
-        
+
         // Ensure workingHours is an object, not a string
         if (typeof workingHoursObj === 'string') {
             console.error('ERROR: workingHoursObj is still a string! Attempting to parse again...');
@@ -361,18 +390,18 @@ exports.createEmployee = async (req, res) => {
                 workingHoursObj = {};
             }
         }
-        
+
         // Final validation before creating
         if (!Array.isArray(skillsArray)) {
             console.error('FATAL: skillsArray is not an array before create! Type:', typeof skillsArray, 'Value:', skillsArray);
             throw new Error('Invalid skills format: must be an array');
         }
-        
+
         if (typeof workingHoursObj !== 'object' || workingHoursObj === null || Array.isArray(workingHoursObj)) {
             console.error('FATAL: workingHoursObj is not an object before create! Type:', typeof workingHoursObj, 'Value:', workingHoursObj);
             workingHoursObj = {};
         }
-        
+
         // Debug: Log what we're about to create
         console.log('=== CREATING EMPLOYEE ===');
         console.log('Skills:', {
@@ -387,14 +416,14 @@ exports.createEmployee = async (req, res) => {
             isObject: typeof workingHoursObj === 'object' && !Array.isArray(workingHoursObj),
             stringified: JSON.stringify(workingHoursObj)
         });
-        
+
         // CRITICAL: Create a fresh array/object to ensure no string contamination
         // Sequelize JSON type requires pure JavaScript arrays/objects, not JSON strings
         const finalSkills = Array.isArray(skillsArray) ? [...skillsArray] : [];
-        const finalWorkingHours = (typeof workingHoursObj === 'object' && workingHoursObj !== null && !Array.isArray(workingHoursObj)) 
-            ? { ...workingHoursObj } 
+        const finalWorkingHours = (typeof workingHoursObj === 'object' && workingHoursObj !== null && !Array.isArray(workingHoursObj))
+            ? { ...workingHoursObj }
             : {};
-        
+
         console.log('🔧 FINAL VALUES BEFORE CREATE:');
         console.log('  Skills:', {
             value: finalSkills,
@@ -410,7 +439,7 @@ exports.createEmployee = async (req, res) => {
             constructor: finalWorkingHours.constructor.name,
             stringified: JSON.stringify(finalWorkingHours)
         });
-        
+
         // CRITICAL: Final validation and explicit type checking
         // Double-check: If finalSkills is somehow still a string, parse it one more time
         let skillsForDB = finalSkills;
@@ -423,7 +452,7 @@ exports.createEmployee = async (req, res) => {
                 skillsForDB = [];
             }
         }
-        
+
         // Ensure it's an array - create a completely fresh array
         if (!Array.isArray(skillsForDB)) {
             console.error('🚨 CRITICAL: skillsForDB is not an array! Type:', typeof skillsForDB, 'Value:', skillsForDB);
@@ -432,7 +461,7 @@ exports.createEmployee = async (req, res) => {
             // Create a completely fresh array to avoid any reference issues
             skillsForDB = JSON.parse(JSON.stringify(skillsForDB));
         }
-        
+
         // Same for workingHours
         let workingHoursForDB = finalWorkingHours;
         if (typeof finalWorkingHours === 'string') {
@@ -444,7 +473,7 @@ exports.createEmployee = async (req, res) => {
                 workingHoursForDB = {};
             }
         }
-        
+
         // Ensure it's an object - create a completely fresh object
         if (typeof workingHoursForDB !== 'object' || workingHoursForDB === null || Array.isArray(workingHoursForDB)) {
             console.error('🚨 CRITICAL: workingHoursForDB is not an object! Type:', typeof workingHoursForDB, 'Value:', workingHoursForDB);
@@ -453,7 +482,7 @@ exports.createEmployee = async (req, res) => {
             // Create a completely fresh object to avoid any reference issues
             workingHoursForDB = JSON.parse(JSON.stringify(workingHoursForDB));
         }
-        
+
         console.log('🎯 FINAL VALUES GOING TO SEQUELIZE:');
         console.log('  skillsForDB:', skillsForDB);
         console.log('  skillsForDB type:', typeof skillsForDB);
@@ -463,7 +492,7 @@ exports.createEmployee = async (req, res) => {
         console.log('  workingHoursForDB:', workingHoursForDB);
         console.log('  workingHoursForDB type:', typeof workingHoursForDB);
         console.log('  workingHoursForDB stringified:', JSON.stringify(workingHoursForDB));
-        
+
         // Create employee - JSONB type should handle arrays/objects correctly
         // Changed model from JSON to JSONB for better Sequelize support
         const employee = await db.Staff.create({
@@ -491,7 +520,7 @@ exports.createEmployee = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded file if employee creation fails
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
@@ -507,7 +536,7 @@ exports.createEmployee = async (req, res) => {
             bodyKeys: Object.keys(req.body || {}),
             file: req.file ? { filename: req.file.filename, path: req.file.path } : null
         });
-        
+
         // Provide more specific error messages
         let errorMessage = 'Failed to create employee';
         if (error.name === 'SequelizeValidationError') {
@@ -517,7 +546,7 @@ exports.createEmployee = async (req, res) => {
         } else if (error.name === 'SequelizeForeignKeyConstraintError') {
             errorMessage = 'Invalid tenant or related data';
         }
-        
+
         // Return error with more details
         const errorResponse = {
             success: false,
@@ -525,7 +554,7 @@ exports.createEmployee = async (req, res) => {
             error: error.message,
             errorName: error.name
         };
-        
+
         // Always include details in development, or if explicitly requested
         if (process.env.NODE_ENV !== 'production') {
             errorResponse.details = error.stack;
@@ -533,7 +562,7 @@ exports.createEmployee = async (req, res) => {
             errorResponse.tenantId = req.tenantId;
             errorResponse.bodyKeys = Object.keys(req.body || {});
         }
-        
+
         res.status(500).json(errorResponse);
     }
 };
@@ -610,7 +639,7 @@ exports.updateEmployee = async (req, res) => {
                     fs.unlinkSync(oldPhotoPath);
                 }
             }
-            
+
             // Set new photo path
             employee.photo = req.file.path.replace(/\\/g, '/').split('uploads/')[1];
         }
@@ -625,7 +654,7 @@ exports.updateEmployee = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded file if update fails
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
@@ -704,6 +733,245 @@ exports.deleteEmployee = async (req, res) => {
             message: 'Failed to delete employee',
             error: error.message
         });
+    }
+};
+
+/**
+ * Update staff app access status
+ * PUT /api/v1/tenant/employees/:id/app-access
+ */
+exports.updateAppAccess = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { app_enabled } = req.body;
+
+        const employee = await db.Staff.findOne({
+            where: { id, tenantId: req.tenantId }
+        });
+
+        if (!employee) {
+            return res.status(404).json({ success: false, message: 'Employee not found' });
+        }
+
+        employee.app_enabled = Boolean(app_enabled);
+
+        // If enabling for the first time and they have no password, we could throw an error or auto-generate
+        // But the preferred flow is checking app_enabled on login. They still need an invite.
+
+        await employee.save();
+
+        res.json({
+            success: true,
+            message: `App access ${employee.app_enabled ? 'enabled' : 'disabled'} successfully`,
+            app_enabled: employee.app_enabled
+        });
+    } catch (error) {
+        console.error('Update app access error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+/**
+ * Send App Invite with Temporary Password
+ * POST /api/v1/tenant/employees/:id/send-invite
+ */
+exports.sendAppInvite = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const employee = await db.Staff.findOne({
+            where: { id, tenantId: req.tenantId },
+            include: [{ model: db.Tenant, as: 'tenant' }]
+        });
+
+        if (!employee) {
+            return res.status(404).json({ success: false, message: 'Employee not found' });
+        }
+
+        if (!employee.email) {
+            return res.status(400).json({ success: false, message: 'Employee must have an email address to receive an invite' });
+        }
+
+        const crypto = require('crypto');
+        const bcrypt = require('bcryptjs');
+
+        // Generate 12 character completely random password
+        const tempPassword = crypto.randomBytes(6).toString('hex');
+        const salt = await bcrypt.genSalt(10);
+
+        // Enable app access automatically when sending invite
+        employee.password_hash = await bcrypt.hash(tempPassword, salt);
+        employee.must_change_password = true;
+        employee.app_enabled = true;
+        await employee.save();
+
+        const emailService = require('../utils/emailService');
+
+        await emailService.sendEmail({
+            to: employee.email,
+            subject: `Welcome to ${employee.tenant.name_en || employee.tenant.name} on RifahStaff`,
+            template: 'staff_welcome',
+            data: {
+                staffName: employee.name,
+                salonName: employee.tenant.name_en || employee.tenant.name,
+                loginEmail: employee.email,
+                tempPassword: tempPassword,
+                appStoreLink: 'https://apple.com/app-store', // Placeholder
+                playStoreLink: 'https://play.google.com/store' // Placeholder
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'Invite sent successfully. The employee can now log in.'
+        });
+    } catch (error) {
+        console.error('Send app invite error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+/**
+ * Admin-triggered staff password reset (sends password reset link email)
+ * POST /api/v1/tenant/employees/:id/reset-password
+ */
+exports.resetStaffPassword = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const employee = await db.Staff.findOne({
+            where: { id, tenantId: req.tenantId },
+            include: [{ model: db.Tenant, as: 'tenant' }]
+        });
+
+        if (!employee) {
+            return res.status(404).json({ success: false, message: 'Employee not found' });
+        }
+
+        if (!employee.email) {
+            return res.status(400).json({ success: false, message: 'Employee has no email address' });
+        }
+
+        const crypto = require('crypto');
+        const bcrypt = require('bcryptjs');
+        const emailService = require('../utils/emailService');
+
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const salt = await bcrypt.genSalt(10);
+
+        employee.password_reset_token = await bcrypt.hash(resetToken, salt);
+        employee.password_reset_expires = new Date(Date.now() + 3600000); // 1 hour
+        await employee.save();
+
+        const resetUrl = `rifahstaff://reset-password?token=${resetToken}&email=${encodeURIComponent(employee.email)}`;
+
+        await emailService.sendEmail({
+            to: employee.email,
+            subject: 'RifahStaff - Password Reset Required (Admin Request)',
+            html: `
+            <div style="font-family: sans-serif; padding: 20px;">
+                <h2>Password Reset Required</h2>
+                <p>Hello ${employee.name},</p>
+                <p>Your salon administrator requested a password reset for your RifahStaff account.</p>
+                <p>Click the link below on your mobile device to reset your password:</p>
+                <a href="${resetUrl}" style="display:inline-block; padding: 10px 20px; background-color: #8B5ADF; color: white; text-decoration: none; border-radius: 5px;">Reset Password</a>
+                <p>This link will expire in 1 hour.</p>
+            </div>
+            `
+        });
+
+        res.json({
+            success: true,
+            message: 'Password reset link sent to employee email'
+        });
+    } catch (error) {
+        console.error('Reset staff password error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+/**
+ * Get Staff Permissions
+ * GET /api/v1/tenant/employees/:id/permissions
+ */
+exports.getStaffPermissions = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Verify the employee belongs to this tenant
+        const employee = await db.Staff.findOne({
+            where: { id, tenantId: req.tenantId }
+        });
+
+        if (!employee) {
+            return res.status(404).json({ success: false, message: 'Employee not found' });
+        }
+
+        // Find or create permissions for this staff
+        let [permissions] = await db.StaffPermission.findOrCreate({
+            where: { staffId: id, tenantId: req.tenantId },
+            defaults: {
+                view_earnings: false,
+                view_reviews: true,
+                reply_reviews: false,
+                view_clients: false
+            }
+        });
+
+        res.json({
+            success: true,
+            permissions
+        });
+    } catch (error) {
+        console.error('Get staff permissions error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+/**
+ * Update Staff Permissions
+ * PUT /api/v1/tenant/employees/:id/permissions
+ */
+exports.updateStaffPermissions = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { view_earnings, view_reviews, reply_reviews, view_clients } = req.body;
+
+        // Verify the employee belongs to this tenant
+        const employee = await db.Staff.findOne({
+            where: { id, tenantId: req.tenantId }
+        });
+
+        if (!employee) {
+            return res.status(404).json({ success: false, message: 'Employee not found' });
+        }
+
+        let [permissions] = await db.StaffPermission.findOrCreate({
+            where: { staffId: id, tenantId: req.tenantId },
+            defaults: {
+                view_earnings: false,
+                view_reviews: true,
+                reply_reviews: false,
+                view_clients: false
+            }
+        });
+
+        // Update fields explicitly if they are provided in the payload
+        if (view_earnings !== undefined) permissions.view_earnings = view_earnings;
+        if (view_reviews !== undefined) permissions.view_reviews = view_reviews;
+        if (reply_reviews !== undefined) permissions.reply_reviews = reply_reviews;
+        if (view_clients !== undefined) permissions.view_clients = view_clients;
+
+        await permissions.save();
+
+        res.json({
+            success: true,
+            message: 'Permissions updated successfully',
+            permissions
+        });
+    } catch (error) {
+        console.error('Update staff permissions error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
 };
 

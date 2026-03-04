@@ -1,22 +1,33 @@
 const db = require('../models');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
- * Get all staff members
+ * Get all staff members (paginated)
  */
 const getStaff = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const { isActive } = req.query;
 
         const where = {};
         if (isActive !== undefined) where.isActive = isActive === 'true';
 
-        const staff = await db.Staff.findAll({
+        const { count, rows: staff } = await db.Staff.findAndCountAll({
             where,
-            include: [{ model: db.Service, as: 'services' }]
+            include: [{ model: db.Service, as: 'services' }],
+            limit,
+            offset
         });
 
-        res.json({ staff, count: staff.length });
+        res.json({
+            staff,
+            count: staff.length,
+            pagination: { total: count, page, limit, totalPages: Math.ceil(count / limit) }
+        });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get staff error:', error);
         res.status(500).json({ message: error.message });
     }

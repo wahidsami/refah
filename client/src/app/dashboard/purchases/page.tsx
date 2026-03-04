@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { api } from "@/lib/api";
+import { api, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import Link from "next/link";
 
@@ -274,7 +274,7 @@ function PurchasesContent() {
                                         <div className="flex items-center gap-4">
                                             {order.items[0].productImage && (
                                                 <img
-                                                    src={`http://localhost:5000${order.items[0].productImage.startsWith('/') ? order.items[0].productImage : `/uploads/${order.items[0].productImage}`}`}
+                                                    src={getImageUrl(order.items[0].productImage)}
                                                     alt={order.items[0].productName}
                                                     className="w-16 h-16 rounded-lg object-cover"
                                                 />

@@ -20,7 +20,7 @@ class BookingService {
      * @returns {Promise<Appointment>}
      */
     async createBooking(data, options = {}) {
-        const { serviceId, staffId, platformUserId, tenantId, startTime } = data;
+        const { serviceId, staffId, platformUserId, tenantId, startTime, paymentIntent } = data;
         const transaction = options.transaction;
         
         // Use transaction if provided, otherwise create one
@@ -65,6 +65,8 @@ class BookingService {
         const bookingSettings = tenantSettings?.bookingSettings || {};
         const allowAnyStaff = bookingSettings.allowAnyStaff !== false; // Default true
         const maxBookingsPerCustomerPerDay = bookingSettings.maxBookingsPerCustomerPerDay || null;
+        const depositPercentage = typeof bookingSettings.depositPercentage === 'number' ? bookingSettings.depositPercentage : 50;
+        const allowDepositBooking = bookingSettings.allowDepositBooking !== false;
 
         // Handle "Any Staff" selection
         let finalStaffId = staffId;
@@ -139,36 +141,56 @@ class BookingService {
         // ========== CONFLICT DETECTION ==========
         const hasConflict = await this.hasConflict(finalStaffId, start, end, null, finalTransaction);
         if (hasConflict) {
+            try {
+                require('../utils/metrics').recordBookingConflict();
+            } catch (_) { /* metrics optional */ }
             throw new Error('Time slot not available - conflict detected');
         }
 
         // ========== PRICING CALCULATION ==========
         const pricing = db.Appointment.calculateRevenueBreakdown(service, staff);
 
-        // ========== REDIS LOCK (Phase 6.2) ==========
-        // Acquire short-term lock to prevent concurrent bookings of same slot
+        // ========== DEPOSIT / REMAINDER (when paymentIntent === 'deposit') ==========
+        const isDepositIntent = allowDepositBooking && paymentIntent === 'deposit';
+        const totalPrice = parseFloat(pricing.price);
+        const depositAmount = isDepositIntent
+            ? parseFloat((totalPrice * (depositPercentage / 100)).toFixed(2))
+            : 0;
+        const remainderAmount = isDepositIntent
+            ? parseFloat((totalPrice - depositAmount).toFixed(2))
+            : 0;
+
+        // ========== REDIS LOCK (fail closed: no Redis / error => do not book) ==========
         const lockKey = `booking:${finalStaffId}:${start.toISOString()}`;
         const redisService = require('./redisService');
-        const lockAcquired = await redisService.acquireLock(lockKey, 300); // 5 minutes
-
+        let lockAcquired = false;
+        try {
+            lockAcquired = await redisService.acquireLock(lockKey, 300);
+        } catch (lockErr) {
+            throw lockErr;
+        }
         if (!lockAcquired) {
-            throw new Error('This time slot is currently being booked by another customer. Please try again in a moment.');
+            const err = new Error('This time slot is currently being booked by another customer. Please try again in a moment.');
+            err.code = 'SLOT_BUSY';
+            throw err;
         }
 
         try {
             // ========== FINAL CONFLICT CHECK (Transaction-level protection) ==========
-            // Re-check conflict right before creation to prevent race conditions
             const finalConflictCheck = await this.hasConflict(finalStaffId, start, end, null, finalTransaction);
             if (finalConflictCheck) {
+                try {
+                    require('../utils/metrics').recordBookingConflict();
+                } catch (_) { /* metrics optional */ }
                 throw new Error('Time slot is no longer available. Please select another time.');
             }
 
             // ========== CREATE APPOINTMENT ==========
-            const appointment = await db.Appointment.create({
+            const appointmentPayload = {
                 serviceId,
                 staffId: finalStaffId,
                 platformUserId,
-                tenantId, // Store tenantId for faster queries
+                tenantId,
                 startTime: start,
                 endTime: end,
                 price: pricing.price,
@@ -180,17 +202,20 @@ class BookingService {
                 employeeCommissionRate: pricing.employeeCommissionRate,
                 employeeCommission: pricing.employeeCommission,
                 status: 'confirmed',
-                paymentStatus: 'pending'
-            }, { transaction: finalTransaction });
+                paymentStatus: 'pending',
+                depositAmount,
+                remainderAmount,
+                totalPaid: 0,
+                depositPaid: false,
+                remainderPaid: false
+            };
+            const appointment = await db.Appointment.create(appointmentPayload, { transaction: finalTransaction });
 
             // ========== UPDATE RELATED RECORDS ==========
-            // Update staff stats
             await db.Staff.increment('totalBookings', {
                 where: { id: finalStaffId },
                 transaction: finalTransaction
             });
-
-            // Update platform user stats
             await db.PlatformUser.increment('totalBookings', {
                 where: { id: platformUserId },
                 transaction: finalTransaction
@@ -200,8 +225,6 @@ class BookingService {
                 where: { id: platformUserId },
                 transaction: finalTransaction
             });
-
-            // Update CustomerInsight
             await this._updateCustomerInsight(
                 platformUserId,
                 tenantId,
@@ -211,35 +234,18 @@ class BookingService {
                 start,
                 finalTransaction
             );
-
-            // Update tenant usage for subscription tracking
             try {
                 const { updateUsage } = require('../middleware/checkSubscription');
                 await updateUsage(tenantId, 'booking', true);
             } catch (usageError) {
                 console.error('Failed to update usage:', usageError);
-                // Don't fail booking if usage tracking fails
             }
 
-            // Commit transaction if we created it
             if (shouldCommit) {
                 await finalTransaction.commit();
             }
-
-            // Release lock on success
-            await redisService.releaseLock(lockKey);
-
             return appointment;
         } catch (innerError) {
-            // Inner catch - handles errors during appointment creation
-            // Release lock on error
-            try {
-                await redisService.releaseLock(lockKey);
-            } catch (lockError) {
-                // Ignore lock release errors
-            }
-            
-            // Rollback transaction if we created it
             if (shouldCommit && finalTransaction && !finalTransaction.finished) {
                 try {
                     await finalTransaction.rollback();
@@ -248,10 +254,21 @@ class BookingService {
                 }
             }
             throw innerError;
+        } finally {
+            if (lockAcquired) {
+                try {
+                    await redisService.releaseLock(lockKey);
+                } catch (releaseErr) {
+                    console.error('Lock release error:', releaseErr);
+                }
+            }
         }
-        
         } catch (error) {
-            // Outer catch - handles validation errors before lock acquisition
+            if (error.name === 'SequelizeUniqueConstraintError') {
+                const e = new Error('Time slot already taken.');
+                e.code = 'SLOT_ALREADY_TAKEN';
+                throw e;
+            }
             throw error;
         }
     }
@@ -298,8 +315,7 @@ class BookingService {
         for (const staff of sortedStaff) {
             const hasConflict = await this.hasConflict(staff.id, start, end, null, transaction);
             if (!hasConflict) {
-                // Return first available staff (sorted by rating)
-                // TODO: Enhance with workload balance, customer history, etc.
+                // Return first available staff (sorted by rating); future: workload balance, customer history
                 return staff.id;
             }
         }
@@ -542,6 +558,9 @@ class BookingService {
         });
 
         if (conflicts.length > 0) {
+            try {
+                require('../utils/metrics').recordBookingConflict();
+            } catch (_) { /* metrics optional */ }
             throw new Error('Time slot not available - conflict detected');
         }
 
@@ -624,6 +643,10 @@ class BookingService {
         }
     }
 
+    /**
+     * Cancel an appointment. Applies optional cancellation fee from TenantSettings when customer had paid.
+     * @returns {Promise<{ appointment: Appointment, refundAmount?: number, feeRetained?: number }>}
+     */
     async cancelAppointment(appointmentId, platformUserId = null) {
         const appointment = await db.Appointment.findByPk(appointmentId, {
             include: [
@@ -645,14 +668,237 @@ class BookingService {
             throw new Error('Appointment already cancelled');
         }
 
-        await appointment.update({ status: 'cancelled' });
+        const totalPaid = parseFloat(appointment.totalPaid || 0);
+        let refundAmount = 0;
+        let feeRetained = 0;
 
-        // Update CustomerInsight cancellation count if platform user
-        if (appointment.platformUserId) {
-            // Get tenantId from staff or service (we need to add this to the appointment or get from context)
-            // For now, we'll update the cancellation count when we have tenant context
-            // This will be handled in the controller where we have tenantId
+        if (totalPaid > 0) {
+            const tenantSettings = await db.TenantSettings.findOne({
+                where: { tenantId: appointment.tenantId }
+            });
+            const feeType = (tenantSettings?.cancellationFeeType || 'none').toLowerCase();
+            const feeValue = parseFloat(tenantSettings?.cancellationFeeValue || 0) || 0;
+
+            if (feeType === 'percentage' && feeValue >= 0 && feeValue <= 100) {
+                feeRetained = parseFloat((totalPaid * (feeValue / 100)).toFixed(2));
+            } else if (feeType === 'fixed' && feeValue > 0) {
+                feeRetained = Math.min(feeValue, totalPaid);
+            }
+            refundAmount = parseFloat((totalPaid - feeRetained).toFixed(2));
+
+            // Refund record for audit (record only; actual gateway refund later)
+            const method = (appointment.paymentMethod || 'online').toLowerCase();
+            const paymentMethod = method === 'cash' ? 'cash' : method === 'wallet' ? 'wallet' : method === 'card_pos' || method === 'card' ? 'card_pos' : 'online';
+            await db.PaymentTransaction.create({
+                appointmentId: appointment.id,
+                type: 'refund',
+                amount: refundAmount,
+                currency: 'SAR',
+                paymentMethod,
+                status: 'completed',
+                metadata: {
+                    feeRetained,
+                    cancellationFeeType: feeType,
+                    cancellationFeeValue: feeValue,
+                    totalPaid,
+                },
+                processedAt: new Date(),
+            });
         }
+
+        const newPaymentStatus = totalPaid > 0
+            ? (feeRetained > 0 ? 'partially_refunded' : 'refunded')
+            : appointment.paymentStatus;
+
+        await appointment.update({
+            status: 'cancelled',
+            paymentStatus: newPaymentStatus
+        });
+
+        return {
+            appointment,
+            ...(totalPaid > 0 && { refundAmount, feeRetained })
+        };
+    }
+
+    /**
+     * Reschedule an appointment to a new start time.
+     * Allowed only if current start is at least rescheduleHours (default 24) from now.
+     *
+     * @param {string} appointmentId - Appointment ID
+     * @param {string} platformUserId - Requester (must own the booking for customer app)
+     * @param {Date|string} newStartTime - New start time (ISO string or Date)
+     * @param {string} [newStaffId] - Optional staff ID (if changing staff)
+     * @returns {Promise<Appointment>}
+     */
+    async rescheduleAppointment(appointmentId, platformUserId, newStartTime, newStaffId = null) {
+        const appointment = await db.Appointment.findByPk(appointmentId, {
+            include: [
+                { model: db.Service, as: 'service' },
+                { model: db.Staff, as: 'staff' }
+            ]
+        });
+
+        if (!appointment) {
+            throw new Error('Appointment not found');
+        }
+
+        if (appointment.platformUserId !== platformUserId) {
+            throw new Error('Unauthorized: You can only reschedule your own appointments');
+        }
+
+        if (!['confirmed', 'pending'].includes(appointment.status)) {
+            throw new Error('Only confirmed or pending appointments can be rescheduled');
+        }
+
+        const tenantSettings = await db.TenantSettings.findOne({
+            where: { tenantId: appointment.tenantId }
+        });
+        const rescheduleHours = tenantSettings?.cancellationHours ?? 24;
+        const maxAdvanceDays = tenantSettings?.maxAdvanceBookingDays ?? 30;
+
+        const now = new Date();
+        const currentStart = new Date(appointment.startTime);
+        const minRescheduleFrom = new Date(now.getTime() + rescheduleHours * 60 * 60 * 1000);
+        if (currentStart < minRescheduleFrom) {
+            throw new Error(`Reschedule is only allowed at least ${rescheduleHours} hours before the appointment`);
+        }
+
+        const start = new Date(newStartTime);
+        if (isNaN(start.getTime())) {
+            throw new Error('Invalid start time format');
+        }
+        if (start <= now) {
+            throw new Error('New start time must be in the future');
+        }
+
+        const maxAdvance = new Date(now);
+        maxAdvance.setDate(maxAdvance.getDate() + maxAdvanceDays);
+        maxAdvance.setHours(23, 59, 59, 999);
+        if (start > maxAdvance) {
+            throw new Error(`Booking cannot be more than ${maxAdvanceDays} days in advance`);
+        }
+
+        const service = appointment.service || appointment.Service;
+        const staff = appointment.staff || appointment.Staff;
+        if (!service) throw new Error('Service not found');
+        const duration = service.duration || 30;
+        const newEnd = new Date(start.getTime() + duration * 60000);
+
+        let staffIdToUse = newStaffId || appointment.staffId;
+        if (newStaffId) {
+            const staffMember = await db.Staff.findByPk(newStaffId);
+            if (!staffMember || staffMember.tenantId !== appointment.tenantId) {
+                throw new Error('Invalid staff');
+            }
+            const canPerform = await db.ServiceEmployee.findOne({
+                where: { serviceId: appointment.serviceId, staffId: newStaffId }
+            });
+            if (!canPerform) {
+                throw new Error('Selected staff cannot perform this service');
+            }
+        }
+
+        const hasConflict = await this.hasConflict(staffIdToUse, start, newEnd, appointmentId);
+        if (hasConflict) {
+            throw new Error('Time slot not available - conflict detected');
+        }
+
+        await appointment.update({
+            startTime: start,
+            endTime: newEnd,
+            ...(newStaffId && { staffId: newStaffId })
+        });
+
+        return appointment;
+    }
+
+    /**
+     * Reschedule an appointment (tenant dashboard). Caller must be the tenant that owns the appointment.
+     *
+     * @param {string} appointmentId - Appointment ID
+     * @param {string} tenantId - Tenant ID (from auth)
+     * @param {Date|string} newStartTime - New start time
+     * @param {string} [newStaffId] - Optional staff ID
+     * @returns {Promise<Appointment>}
+     */
+    async rescheduleAppointmentByTenant(appointmentId, tenantId, newStartTime, newStaffId = null) {
+        const appointment = await db.Appointment.findByPk(appointmentId, {
+            include: [
+                { model: db.Service, as: 'service' },
+                { model: db.Staff, as: 'staff' }
+            ]
+        });
+
+        if (!appointment) {
+            throw new Error('Appointment not found');
+        }
+
+        if (appointment.tenantId !== tenantId) {
+            throw new Error('Unauthorized: Appointment does not belong to your business');
+        }
+
+        if (!['confirmed', 'pending'].includes(appointment.status)) {
+            throw new Error('Only confirmed or pending appointments can be rescheduled');
+        }
+
+        const tenantSettings = await db.TenantSettings.findOne({
+            where: { tenantId: appointment.tenantId }
+        });
+        const rescheduleHours = tenantSettings?.cancellationHours ?? 24;
+        const maxAdvanceDays = tenantSettings?.maxAdvanceBookingDays ?? 30;
+
+        const now = new Date();
+        const currentStart = new Date(appointment.startTime);
+        const minRescheduleFrom = new Date(now.getTime() + rescheduleHours * 60 * 60 * 1000);
+        if (currentStart < minRescheduleFrom) {
+            throw new Error(`Reschedule is only allowed at least ${rescheduleHours} hours before the appointment`);
+        }
+
+        const start = new Date(newStartTime);
+        if (isNaN(start.getTime())) {
+            throw new Error('Invalid start time format');
+        }
+        if (start <= now) {
+            throw new Error('New start time must be in the future');
+        }
+
+        const maxAdvance = new Date(now);
+        maxAdvance.setDate(maxAdvance.getDate() + maxAdvanceDays);
+        maxAdvance.setHours(23, 59, 59, 999);
+        if (start > maxAdvance) {
+            throw new Error(`Booking cannot be more than ${maxAdvanceDays} days in advance`);
+        }
+
+        const service = appointment.service || appointment.Service;
+        if (!service) throw new Error('Service not found');
+        const duration = service.duration || 30;
+        const newEnd = new Date(start.getTime() + duration * 60000);
+
+        let staffIdToUse = newStaffId || appointment.staffId;
+        if (newStaffId) {
+            const staffMember = await db.Staff.findByPk(newStaffId);
+            if (!staffMember || staffMember.tenantId !== appointment.tenantId) {
+                throw new Error('Invalid staff');
+            }
+            const canPerform = await db.ServiceEmployee.findOne({
+                where: { serviceId: appointment.serviceId, staffId: newStaffId }
+            });
+            if (!canPerform) {
+                throw new Error('Selected staff cannot perform this service');
+            }
+        }
+
+        const hasConflict = await this.hasConflict(staffIdToUse, start, newEnd, appointmentId);
+        if (hasConflict) {
+            throw new Error('Time slot not available - conflict detected');
+        }
+
+        await appointment.update({
+            startTime: start,
+            endTime: newEnd,
+            ...(newStaffId && { staffId: newStaffId })
+        });
 
         return appointment;
     }

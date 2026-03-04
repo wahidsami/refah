@@ -15,7 +15,7 @@ const authenticateTenant = async (req, res, next) => {
   try {
     // Get token from header
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
@@ -26,7 +26,7 @@ const authenticateTenant = async (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if it's a tenant token (not platform user or admin)
     if (decoded.type !== 'tenant') {
@@ -48,19 +48,20 @@ const authenticateTenant = async (req, res, next) => {
       });
     }
 
-    // Check if tenant account is active
-    if (tenant.status === 'suspended' || tenant.status === 'rejected') {
+    // Rejected: block entirely. Suspended: allow through but restrict to billing routes only (see allowSuspendedBillingOnly)
+    if (tenant.status === 'rejected') {
       return res.status(403).json({
         success: false,
-        message: `Account is ${tenant.status}. Please contact support.`
+        message: 'Account is rejected. Please contact support.'
       });
     }
 
     // Attach tenant data to request
     req.tenantId = tenant.id;
     req.tenant = tenant;
+    req.tenantSuspended = tenant.status === 'suspended';
     req.userId = decoded.id; // For backward compatibility
-    
+
     next();
   } catch (error) {
     console.error('Tenant authentication error:', error);
@@ -101,7 +102,7 @@ const optionalTenantAuth = async (req, res, next) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     if (decoded.type === 'tenant') {
       const tenant = await db.Tenant.findByPk(decoded.id, {
@@ -125,7 +126,10 @@ const optionalTenantAuth = async (req, res, next) => {
 
 /**
  * Check if tenant has specific permission/feature access
- * Can be used for subscription-based features
+ * 3-level check:
+ *   1. TenantSettings.features (per-tenant manual overrides)
+ *   2. Active TenantSubscription → SubscriptionPackage.limits
+ *   3. Fallback: SubscriptionPackage.slug matches Tenant.plan field
  */
 const checkTenantFeature = (feature) => {
   return async (req, res, next) => {
@@ -137,24 +141,51 @@ const checkTenantFeature = (feature) => {
         });
       }
 
-      // Get tenant settings to check subscription/features
-      const settings = await db.TenantSettings.findOne({
-        where: { tenantId: req.tenantId }
-      });
+      const { Op } = require('sequelize');
+      const tenantId = req.tenantId;
 
-      // Check if tenant has access to the feature
-      // This can be expanded based on subscription tiers
-      const features = settings?.features || {};
-      
-      if (!features[feature]) {
-        return res.status(403).json({
-          success: false,
-          message: `This feature (${feature}) is not available in your current plan`,
-          upgradeRequired: true
-        });
+      // Level 1: TenantSettings.features (per-tenant manual overrides)
+      const settings = await db.TenantSettings.findOne({ where: { tenantId } });
+      const tenantFeatures = settings?.features || {};
+      if (tenantFeatures[feature] === true) {
+        return next();
       }
 
-      next();
+      // Level 2: Active TenantSubscription → SubscriptionPackage.limits (shared service)
+      const { getActiveSubscriptionForTenant } = require('../services/tenantSubscriptionService');
+      const subResult = await getActiveSubscriptionForTenant(tenantId, {
+        statuses: ['active', 'trial', 'APPROVED_FREE_ACTIVE']
+      });
+      if (subResult?.package?.limits?.[feature] === true) {
+        return next();
+      }
+
+      // Level 3: Fallback — find package by loose name/slug match to tenant plan
+      // 'free_trial' -> base='free' -> matches slug 'free-pack', name 'Free', etc.
+      const tenantPlan = req.tenant.plan || '';
+      const planBase = tenantPlan.split('_')[0];
+
+      const planPackage = await db.SubscriptionPackage.findOne({
+        where: {
+          [Op.or]: [
+            { slug: { [Op.iLike]: `%${planBase}%` } },
+            { name: { [Op.iLike]: `%${planBase}%` } }
+          ],
+          isActive: true
+        }
+      });
+
+      if (planPackage?.limits?.[feature] === true) {
+        return next();
+      }
+
+      // Feature not found in any source
+      return res.status(403).json({
+        success: false,
+        message: `This feature (${feature}) is not available in your current plan`,
+        upgradeRequired: true
+      });
+
     } catch (error) {
       console.error('Feature check error:', error);
       res.status(500).json({
@@ -179,16 +210,16 @@ const rateLimitTenant = (maxRequests = 100, windowMs = 60000) => {
 
     const now = Date.now();
     const tenantKey = req.tenantId;
-    
+
     if (!requests.has(tenantKey)) {
       requests.set(tenantKey, []);
     }
 
     const tenantRequests = requests.get(tenantKey);
-    
+
     // Remove old requests outside the time window
     const recentRequests = tenantRequests.filter(timestamp => now - timestamp < windowMs);
-    
+
     if (recentRequests.length >= maxRequests) {
       return res.status(429).json({
         success: false,
@@ -199,7 +230,7 @@ const rateLimitTenant = (maxRequests = 100, windowMs = 60000) => {
 
     recentRequests.push(now);
     requests.set(tenantKey, recentRequests);
-    
+
     next();
   };
 };

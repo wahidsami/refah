@@ -9,6 +9,11 @@ import { DashboardLayout } from "@/components/DashboardLayout";
 import { api, Appointment } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import Link from "next/link";
+import {
+    ServiceCompletedModal,
+    shouldShowServiceCompletedModal,
+    markServiceCompletedModalShown,
+} from "@/components/ServiceCompletedModal";
 
 function BookingDetailsContent() {
     const router = useRouter();
@@ -19,6 +24,7 @@ function BookingDetailsContent() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [cancelling, setCancelling] = useState(false);
+    const [serviceCompletedModal, setServiceCompletedModal] = useState<"remainder_due" | "thank_you" | null>(null);
 
     const bookingId = params.id as string;
 
@@ -37,6 +43,12 @@ function BookingDetailsContent() {
             );
             if (response.success && response.appointment) {
                 setBooking(response.appointment);
+                const app = response.appointment;
+                if (app.status === "completed" && app.id && shouldShowServiceCompletedModal(app.id)) {
+                    const isRemainderDue = app.paymentStatus === "deposit_paid" && Number(app.remainderAmount ?? 0) > 0;
+                    setServiceCompletedModal(isRemainderDue ? "remainder_due" : "thank_you");
+                    markServiceCompletedModalShown(app.id);
+                }
             } else {
                 setError("Booking not found");
             }
@@ -110,7 +122,9 @@ function BookingDetailsContent() {
 
     const getPaymentStatusText = (status: string) => {
         switch (status) {
-            case "paid": return "Paid";
+            case "paid":
+            case "fully_paid": return "Paid";
+            case "deposit_paid": return "Deposit paid";
             case "pending": return "Pending";
             case "refunded": return "Refunded";
             case "partially_refunded": return "Partially Refunded";
@@ -322,6 +336,18 @@ function BookingDetailsContent() {
                 <div className="mt-6 text-center text-xs text-gray-500">
                     {locale === 'ar' ? 'معرف الحجز:' : 'Booking ID:'} {booking.id}
                 </div>
+
+                {serviceCompletedModal && (
+                    <ServiceCompletedModal
+                        type={serviceCompletedModal}
+                        remainderAmount={Number(booking.remainderAmount ?? 0)}
+                        appointmentId={booking.id}
+                        amountPaid={Number(booking.price ?? 0)}
+                        onClose={() => setServiceCompletedModal(null)}
+                        onViewBookings={() => router.push("/dashboard/bookings")}
+                        onLeaveReview={() => router.push("/dashboard/bookings")}
+                    />
+                )}
             </div>
         </DashboardLayout>
     );

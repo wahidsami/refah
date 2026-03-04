@@ -5,13 +5,13 @@ const userAuthService = require('../services/userAuthService');
  */
 const register = async (req, res) => {
     try {
-        const { email, phone, password, firstName, lastName } = req.body;
+        const { email, phone, password, firstName, lastName, dateOfBirth, gender } = req.body;
 
         // Validation
         if (!email || !phone || !password || !firstName || !lastName) {
             return res.status(400).json({
                 success: false,
-                message: 'All fields are required'
+                message: 'All required fields must be provided'
             });
         }
 
@@ -41,12 +41,22 @@ const register = async (req, res) => {
             });
         }
 
+        // Handle avatar upload
+        let avatarPath = null;
+        if (req.file) {
+            // Store relative path from server root
+            avatarPath = `/uploads/avatars/${req.file.filename}`;
+        }
+
         const result = await userAuthService.register({
             email,
             phone,
             password,
             firstName,
-            lastName
+            lastName,
+            dateOfBirth,
+            gender,
+            avatar: avatarPath
         });
 
         res.status(201).json({
@@ -69,7 +79,7 @@ const register = async (req, res) => {
  */
 const login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, fcmToken } = req.body;
 
         if (!email || !password) {
             return res.status(400).json({
@@ -79,6 +89,10 @@ const login = async (req, res) => {
         }
 
         const result = await userAuthService.login(email, password);
+
+        if (fcmToken && typeof fcmToken === 'string' && result.user?.id) {
+            userAuthService.registerFcmToken(result.user.id, fcmToken.trim()).catch(() => {});
+        }
 
         res.json({
             success: true,
@@ -135,6 +149,32 @@ const logout = async (req, res) => {
         res.json({
             success: true,
             message: 'Logged out successfully'
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+/**
+ * Register FCM token for push notifications (customer app)
+ * POST /api/v1/auth/user/register-fcm  body: { fcmToken }
+ */
+const registerFcmToken = async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        if (!fcmToken || typeof fcmToken !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'fcmToken is required'
+            });
+        }
+        await userAuthService.registerFcmToken(req.userId, fcmToken.trim());
+        res.json({
+            success: true,
+            message: 'Push notification token registered'
         });
     } catch (error) {
         res.status(500).json({
@@ -277,11 +317,11 @@ const resetPassword = async (req, res) => {
 };
 
 /**
- * Resend verification email
+ * Resend verification email (deferred: returns success until email provider is wired).
  */
 const resendVerification = async (req, res) => {
     try {
-        // TODO: Implement resend verification
+        // Stub: actual email send deferred until provider configured
         res.json({
             success: true,
             message: 'Verification email sent'
@@ -299,6 +339,7 @@ module.exports = {
     login,
     refreshToken,
     logout,
+    registerFcmToken,
     verifyEmail,
     sendPhoneVerification,
     verifyPhone,

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { AdminLayout } from "@/components/AdminLayout";
-import { adminApi } from "@/lib/api";
+import { adminApi, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -167,7 +167,7 @@ export default function UserDetailsPage() {
             <div className="w-16 h-16 rounded-full bg-primary-500/20 flex items-center justify-center text-3xl">
               {user.profileImage ? (
                 <img
-                  src={`http://localhost:5000${user.profileImage}`}
+                  src={getImageUrl(user.profileImage)}
                   alt=""
                   className="w-16 h-16 rounded-full object-cover"
                 />

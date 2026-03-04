@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "280559895169",
+    "project_id": "pawsitive-life-odcs0",
+    "storage_bucket": "pawsitive-life-odcs0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:280559895169:android:69bb12ee71b97c2b0c8380",
+        "android_client_info": {
+          "package_name": "com.refah.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCUiQsC4X6UnMvXzrNRpN4pnrYCs67ybiI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

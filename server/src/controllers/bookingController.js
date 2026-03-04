@@ -1,6 +1,7 @@
 const bookingService = require('../services/bookingService');
 const db = require('../models');
 const { Op } = require('sequelize');
+const firebaseService = require('../services/firebaseService');
 
 /**
  * Search for available slots
@@ -8,6 +9,7 @@ const { Op } = require('sequelize');
  * Public endpoint - tenantId required in request body
  */
 const searchAvailability = async (req, res) => {
+    const startTotal = Date.now();
     try {
         const { serviceId, staffId, date, tenantId } = req.body;
 
@@ -37,6 +39,23 @@ const searchAvailability = async (req, res) => {
             date
         });
 
+        const totalMs = Date.now() - startTotal;
+        if (process.env.AVAILABILITY_TIMING_LOG === '1' || process.env.NODE_ENV !== 'production') {
+            console.log(JSON.stringify({
+                event: 'availability_search',
+                totalMs,
+                requestId: req.requestId || null,
+                tenantId: finalTenantId,
+                serviceId,
+                staffId: staffId || null,
+                date,
+                slotsCount: result.slots.length,
+                availableSlots: result.metadata?.availableSlots ?? 0,
+                staffCount: result.metadata?.staffCount ?? (staffId ? 1 : 0),
+                ...(result._timings && { timings: result._timings })
+            }));
+        }
+
         res.json({
             success: true,
             slots: result.slots,
@@ -48,15 +67,15 @@ const searchAvailability = async (req, res) => {
 
     } catch (error) {
         console.error('Search availability error:', error);
-        
+
         let statusCode = 500;
         if (error.message.includes('required') || error.message.includes('not found')) {
             statusCode = 400;
         }
-        
-        res.status(statusCode).json({ 
+
+        res.status(statusCode).json({
             success: false,
-            message: error.message 
+            message: error.message
         });
     }
 };
@@ -100,7 +119,7 @@ const getRecommendations = async (req, res) => {
  */
 const createBooking = async (req, res) => {
     try {
-        const { serviceId, staffId, startTime, tenantId } = req.body;
+        const { serviceId, staffId, startTime, tenantId, paymentIntent } = req.body;
         const platformUserId = req.userId; // From auth middleware
 
         // Validation
@@ -113,7 +132,7 @@ const createBooking = async (req, res) => {
 
         // Get tenantId from request body or use default
         let finalTenantId = tenantId || req.tenantId;
-        
+
         // If no tenantId provided, try to get from service
         if (!finalTenantId) {
             const service = await db.Service.findByPk(serviceId);
@@ -127,6 +146,29 @@ const createBooking = async (req, res) => {
             }
         }
 
+        // Enforce maxBookingsPerMonth limit
+        const { checkResourceLimit } = require('../utils/tenantLimitsUtil');
+        const { Op } = require('sequelize');
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0, 0, 0, 0);
+
+        const limitCheck = await checkResourceLimit(finalTenantId, 'maxBookingsPerMonth', async () => {
+            return await db.Appointment.count({
+                where: {
+                    tenantId: finalTenantId,
+                    createdAt: { [Op.gte]: startOfMonth }
+                }
+            });
+        });
+
+        if (!limitCheck.allowed) {
+            return res.status(403).json({
+                success: false,
+                message: `This salon has reached its monthly booking limit on the ${limitCheck.packageName} plan.`
+            });
+        }
+
         // Use unified booking service
         // staffId is optional - if not provided, system will auto-assign best available staff
         const appointment = await bookingService.createBooking({
@@ -134,7 +176,8 @@ const createBooking = async (req, res) => {
             staffId: staffId || null, // null = "Any Staff"
             platformUserId,
             tenantId: finalTenantId,
-            startTime
+            startTime,
+            paymentIntent: paymentIntent || 'full' // 'full' | 'deposit'
         });
 
         // Load related data with platform user
@@ -142,7 +185,7 @@ const createBooking = async (req, res) => {
             include: [
                 { model: db.Service, as: 'service' },
                 { model: db.Staff, as: 'staff' },
-                { 
+                {
                     model: db.PlatformUser,
                     as: 'user',
                     attributes: ['id', 'firstName', 'lastName', 'email', 'phone']
@@ -156,22 +199,46 @@ const createBooking = async (req, res) => {
             appointment: fullAppointment
         });
 
+        // --- Push Notification (fire-and-forget, never blocks the response) ---
+        // Fetch the assigned staff member's FCM token and notify them of the new booking.
+        // We do this AFTER the response is sent so the customer gets instant confirmation.
+        setImmediate(async () => {
+            try {
+                if (fullAppointment && fullAppointment.staffId) {
+                    const staff = await db.Staff.findByPk(fullAppointment.staffId, {
+                        attributes: ['id', 'fcm_token']
+                    });
+                    if (staff && staff.fcm_token) {
+                        await firebaseService.notifyNewBooking(staff.fcm_token, fullAppointment);
+                    }
+                }
+            } catch (notifError) {
+                console.error('[BookingController] Failed to send new booking push notification:', notifError.message);
+            }
+        });
+
     } catch (error) {
         console.error('Create booking error:', error);
-        
-        // Determine appropriate status code
+
         let statusCode = 500;
-        if (error.message.includes('required') || error.message.includes('not found')) {
+        let message = error.message;
+        if (error.code === 'REDIS_UNAVAILABLE') {
+            statusCode = 503;
+            message = 'Booking service temporarily unavailable. Please try again shortly.';
+        } else if (error.code === 'SLOT_BUSY' || error.code === 'SLOT_ALREADY_TAKEN') {
+            statusCode = 409;
+            message = error.message || 'Time slot already taken.';
+        } else if (error.message.includes('required') || error.message.includes('not found')) {
             statusCode = 400;
         } else if (error.message.includes('conflict') || error.message.includes('not available')) {
-            statusCode = 409; // Conflict
+            statusCode = 409;
         } else if (error.message.includes('inactive') || error.message.includes('banned')) {
-            statusCode = 403; // Forbidden
+            statusCode = 403;
         }
-        
-        res.status(statusCode).json({ 
+
+        res.status(statusCode).json({
             success: false,
-            message: error.message 
+            message
         });
     }
 };
@@ -191,13 +258,14 @@ const getBooking = async (req, res) => {
                 { model: db.Service, as: 'service' },
                 { model: db.Staff, as: 'staff' },
                 { model: db.Tenant, as: 'tenant', required: false },
-                { 
+                {
                     model: db.PlatformUser,
                     as: 'user',
                     attributes: ['id', 'firstName', 'lastName', 'email', 'phone']
                 },
+                { model: db.AppointmentReminder, as: 'reminder', required: false },
                 // Keep legacy customer for backward compatibility
-                { 
+                {
                     model: db.Customer,
                     as: 'legacyCustomer',
                     required: false
@@ -206,18 +274,18 @@ const getBooking = async (req, res) => {
         });
 
         if (!appointment) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 success: false,
-                message: 'Booking not found' 
+                message: 'Booking not found'
             });
         }
 
         // If user is authenticated and owns the booking, return full details
         // Otherwise, return limited details
         if (platformUserId && appointment.platformUserId === platformUserId) {
-            res.json({ 
+            res.json({
                 success: true,
-                appointment 
+                appointment
             });
         } else {
             // Return limited details for non-owners
@@ -230,17 +298,17 @@ const getBooking = async (req, res) => {
                 status: appointment.status,
                 price: appointment.price
             };
-            res.json({ 
+            res.json({
                 success: true,
-                appointment: limitedAppointment 
+                appointment: limitedAppointment
             });
         }
 
     } catch (error) {
         console.error('Get booking error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
-            message: error.message 
+            message: error.message
         });
     }
 };
@@ -255,22 +323,128 @@ const cancelBooking = async (req, res) => {
         const { id } = req.params;
         const platformUserId = req.userId; // From auth middleware
 
-        const appointment = await bookingService.cancelAppointment(id, platformUserId);
+        const result = await bookingService.cancelAppointment(id, platformUserId);
+        const { appointment, refundAmount, feeRetained } = result;
 
-        res.json({
+        const payload = {
             success: true,
             message: 'Booking cancelled successfully',
             appointment
+        };
+        if (refundAmount != null) payload.refundAmount = refundAmount;
+        if (feeRetained != null) payload.feeRetained = feeRetained;
+        res.json(payload);
+
+        // --- Push Notification (fire-and-forget) ---
+        // Notify the assigned staff member that the booking was cancelled.
+        setImmediate(async () => {
+            try {
+                if (appointment && appointment.staffId) {
+                    const staff = await db.Staff.findByPk(appointment.staffId, {
+                        attributes: ['id', 'fcm_token']
+                    });
+                    if (staff && staff.fcm_token) {
+                        await firebaseService.notifyBookingCancelled(staff.fcm_token, appointment);
+                    }
+                }
+            } catch (notifError) {
+                console.error('[BookingController] Failed to send cancellation push notification:', notifError.message);
+            }
         });
 
     } catch (error) {
         console.error('Cancel booking error:', error);
-        const statusCode = error.message.includes('Unauthorized') ? 403 : 
-                          error.message.includes('not found') ? 404 : 500;
-        res.status(statusCode).json({ 
+        const statusCode = error.message.includes('Unauthorized') ? 403 :
+            error.message.includes('not found') ? 404 : 500;
+        res.status(statusCode).json({
             success: false,
-            message: error.message 
+            message: error.message
         });
+    }
+};
+
+/**
+ * Reschedule a booking
+ * PATCH /api/v1/bookings/:id/reschedule
+ * Requires authentication - users can only reschedule their own bookings
+ */
+const rescheduleBooking = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const platformUserId = req.userId;
+        const { startTime, staffId } = req.body || {};
+
+        if (!startTime) {
+            return res.status(400).json({
+                success: false,
+                message: 'startTime is required (ISO string)'
+            });
+        }
+
+        const appointment = await bookingService.rescheduleAppointment(id, platformUserId, startTime, staffId || null);
+
+        res.json({
+            success: true,
+            message: 'Booking rescheduled successfully',
+            appointment
+        });
+    } catch (error) {
+        console.error('Reschedule booking error:', error);
+        const statusCode = error.message.includes('Unauthorized') ? 403 :
+            error.message.includes('not found') ? 404 :
+            error.message.includes('Invalid') || error.message.includes('only allowed') || error.message.includes('must be') || error.message.includes('cannot be') ? 400 : 500;
+        res.status(statusCode).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+/**
+ * Set or clear reminder for a booking
+ * PATCH /api/v1/bookings/:id/reminder
+ * Body: { notify: boolean, minutesBefore?: number } (e.g. 30, 60, 120)
+ */
+const updateBookingReminder = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const platformUserId = req.userId;
+        const { notify, minutesBefore = 30 } = req.body || {};
+
+        const appointment = await db.Appointment.findByPk(id);
+        if (!appointment) {
+            return res.status(404).json({ success: false, message: 'Booking not found' });
+        }
+        if (appointment.platformUserId !== platformUserId) {
+            return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+        if (!['confirmed', 'pending'].includes(appointment.status)) {
+            return res.status(400).json({ success: false, message: 'Reminder only for confirmed or pending appointments' });
+        }
+
+        if (notify) {
+            const mins = Math.min(1440, Math.max(5, parseInt(minutesBefore, 10) || 30));
+            const [reminder] = await db.AppointmentReminder.findOrCreate({
+                where: { appointmentId: id },
+                defaults: {
+                    platformUserId,
+                    reminderMinutesBefore: mins,
+                    sentAt: null,
+                },
+            });
+            await reminder.update({ reminderMinutesBefore: mins, sentAt: null });
+            return res.json({
+                success: true,
+                reminder: { minutesBefore: mins },
+                message: `Reminder set for ${mins} minutes before appointment`,
+            });
+        }
+        const reminder = await db.AppointmentReminder.findOne({ where: { appointmentId: id } });
+        if (reminder) await reminder.destroy();
+        return res.json({ success: true, reminder: null, message: 'Reminder removed' });
+    } catch (error) {
+        console.error('Update booking reminder error:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 
@@ -281,6 +455,9 @@ const cancelBooking = async (req, res) => {
  */
 const listBookings = async (req, res) => {
     try {
+        const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
+
         const { staffId, platformUserId, status, startDate, endDate, tenantId } = req.query;
         const authenticatedUserId = req.userId; // From optional auth
 
@@ -290,17 +467,24 @@ const listBookings = async (req, res) => {
         if (authenticatedUserId) {
             where.platformUserId = authenticatedUserId;
         } else if (platformUserId) {
-            // Allow explicit platformUserId for admin/tenant views
             where.platformUserId = platformUserId;
         }
 
-        // Legacy support - filter by customerId if provided
         if (req.query.customerId) {
             where.customerId = req.query.customerId;
         }
 
         if (staffId) where.staffId = staffId;
-        if (status) where.status = status;
+        if (status) {
+            if (status === 'upcoming') {
+                where.status = ['confirmed', 'pending'];
+                where.startTime = { [Op.gte]: new Date() };
+            } else if (status === 'history') {
+                where.status = ['completed', 'cancelled', 'no_show'];
+            } else {
+                where.status = status;
+            }
+        }
 
         if (startDate || endDate) {
             where.startTime = {};
@@ -308,38 +492,48 @@ const listBookings = async (req, res) => {
             if (endDate) where.startTime[Op.lte] = new Date(endDate);
         }
 
-        const appointments = await db.Appointment.findAll({
+        const { count, rows: appointments } = await db.Appointment.findAndCountAll({
             where,
             include: [
                 { model: db.Service, as: 'service' },
                 { model: db.Staff, as: 'staff' },
-                { 
+                {
                     model: db.PlatformUser,
                     as: 'user',
                     attributes: ['id', 'firstName', 'lastName', 'email', 'phone'],
                     required: false
                 },
-                // Legacy customer support
-                { 
+                {
                     model: db.Customer,
                     as: 'legacyCustomer',
                     required: false
                 }
             ],
-            order: [['startTime', 'DESC']] // Most recent first
+            order: [['startTime', 'DESC']],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
             appointments,
-            count: appointments.length
+            count: appointments.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
 
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('List bookings error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
-            message: error.message 
+            message: error.message
         });
     }
 };
@@ -347,7 +541,7 @@ const listBookings = async (req, res) => {
 /**
  * Get next available slot for a service and staff
  * GET /api/v1/bookings/next-available
- * Query params: tenantId, serviceId, staffId, daysToSearch (optional)
+ * Query params: tenantId, serviceId, staffId, daysToSearch (optional, 1-60, capped by NEXT_AVAILABLE_MAX_DAYS)
  */
 const getNextAvailableSlot = async (req, res) => {
     try {
@@ -360,17 +554,34 @@ const getNextAvailableSlot = async (req, res) => {
             });
         }
 
+        if (daysToSearch !== undefined && daysToSearch !== '') {
+            const requested = parseInt(daysToSearch, 10);
+            if (Number.isNaN(requested) || requested < 1 || requested > 60) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid daysToSearch (must be an integer between 1 and 60)'
+                });
+            }
+        }
+
+        const rawMax = parseInt(process.env.NEXT_AVAILABLE_MAX_DAYS || '14', 10);
+        const maxDays = Math.min(60, Math.max(1, Number.isNaN(rawMax) ? 14 : rawMax));
+        const requested = daysToSearch ? parseInt(daysToSearch, 10) : 14;
+        const daysToSearchCapped = Number.isNaN(requested) ? 14 : Math.min(Math.max(1, requested), maxDays);
+
         const availabilityService = require('../services/availabilityService');
         const result = await availabilityService.getNextAvailableSlot(tenantId, {
             serviceId,
             staffId,
-            daysToSearch: daysToSearch ? parseInt(daysToSearch) : 14
+            daysToSearch: daysToSearchCapped
         });
 
         res.json(result);
 
     } catch (error) {
-        console.error('Get next available slot error:', error);
+        if (process.env.NODE_ENV !== 'test') {
+            console.error('Get next available slot error:', error);
+        }
         res.status(500).json({
             success: false,
             message: error.message || 'Failed to find next available slot'
@@ -384,6 +595,8 @@ module.exports = {
     createBooking,
     getBooking,
     cancelBooking,
+    rescheduleBooking,
+    updateBookingReminder,
     listBookings,
     getNextAvailableSlot
 };

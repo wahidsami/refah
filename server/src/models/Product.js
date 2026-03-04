@@ -155,6 +155,20 @@ module.exports = (sequelize, DataTypes) => {
             defaultValue: false,
             comment: 'Featured products display prominently'
         },
+        allowsDelivery: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: true,
+            field: 'allows_delivery',
+            comment: 'Product can be shipped to customer'
+        },
+        allowsPickup: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: true,
+            field: 'allows_pickup',
+            comment: 'Product can be picked up at venue'
+        },
         soldCount: {
             type: DataTypes.INTEGER,
             defaultValue: 0,

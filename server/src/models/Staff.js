@@ -26,7 +26,7 @@ module.exports = (sequelize, DataTypes) => {
                 as: 'legacyServices'
             });
 
-            Staff.hasMany(models.StaffSchedule, { 
+            Staff.hasMany(models.StaffSchedule, {
                 foreignKey: 'staffId',
                 as: 'schedules'
             });
@@ -51,9 +51,14 @@ module.exports = (sequelize, DataTypes) => {
                 as: 'scheduleOverrides'
             });
 
-            Staff.hasMany(models.Appointment, { 
+            Staff.hasMany(models.Appointment, {
                 foreignKey: 'staffId',
                 as: 'appointments'
+            });
+
+            Staff.hasOne(models.StaffPermission, {
+                foreignKey: 'staffId',
+                as: 'permissions'
             });
         }
     }
@@ -151,6 +156,42 @@ module.exports = (sequelize, DataTypes) => {
         isActive: {
             type: DataTypes.BOOLEAN,
             defaultValue: true
+        },
+        // App Auth fields (DB columns snake_case per migration 20260226060000)
+        password_hash: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            field: 'password_hash'
+        },
+        must_change_password: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: true,
+            field: 'must_change_password'
+        },
+        password_reset_token: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            field: 'password_reset_token'
+        },
+        password_reset_expires: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            field: 'password_reset_expires'
+        },
+        last_login: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            field: 'last_login'
+        },
+        fcm_token: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            field: 'fcm_token'
+        },
+        app_enabled: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: false,
+            field: 'app_enabled'
         }
     }, {
         sequelize,

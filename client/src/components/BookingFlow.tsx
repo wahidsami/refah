@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { api, Service, Staff, Tenant } from "@/lib/api";
+import { api, getImageUrl, Service, Staff, Tenant } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { PaymentModal } from "@/components/PaymentModal";
@@ -62,6 +62,7 @@ export function BookingFlow({
 
     // Payment state
     const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [paymentOption, setPaymentOption] = useState<'pay_50_now' | 'pay_full_online' | 'pay_at_center'>('pay_full_online');
     const [bookingData, setBookingData] = useState<{
         appointmentId: string;
         amount: number;
@@ -263,32 +264,40 @@ export function BookingFlow({
                 serviceId: selectedService.id,
                 staffId: selectedStaff.id,
                 startTime: selectedTime.startTime,
+                paymentIntent: paymentOption === 'pay_50_now' ? 'deposit' : 'full',
             });
 
             if (response.success && response.appointment) {
                 const appointment = response.appointment;
-                const amount = parseFloat(
-                    appointment.price || Number(selectedService.basePrice).toString()
-                );
+                const fullPrice = parseFloat(appointment.price || Number(selectedService.basePrice).toString());
+                const depositAmount = appointment.depositAmount != null ? parseFloat(appointment.depositAmount) : 0;
+                const amountToPay = paymentOption === 'pay_50_now' && depositAmount > 0 ? depositAmount : fullPrice;
+                const payNow = paymentOption !== 'pay_at_center';
+
+                if (!payNow) {
+                    setError("");
+                    alert(locale === 'ar' ? 'تم تأكيد الحجز. يرجى الدفع في المركز.' : 'Booking confirmed. Please pay at the center.');
+                    if (onComplete) onComplete(appointment.id, fullPrice);
+                    if (onCancel) onCancel();
+                    return;
+                }
 
                 // If modal mode, show payment modal
                 if (mode === 'modal') {
                     setBookingData({
                         appointmentId: appointment.id,
-                        amount: amount,
+                        amount: amountToPay,
                         serviceName: selectedService.name_en,
                         staffName: selectedStaff.name,
                         dateTime: selectedTime.startTime
                     });
                     setShowPaymentModal(true);
                 } else if (onComplete) {
-                    // Callback mode
-                    onComplete(appointment.id, amount);
+                    onComplete(appointment.id, amountToPay);
                 } else {
-                    // Otherwise, redirect to payment page (inline mode)
                     const params = new URLSearchParams({
                         appointmentId: appointment.id,
-                        amount: amount.toString(),
+                        amount: amountToPay.toString(),
                         tenantId: tenantId,
                         serviceName: selectedService.name_en,
                         staffName: selectedStaff.name,
@@ -406,7 +415,7 @@ export function BookingFlow({
                                             <div className="flex items-center gap-3">
                                                 {staffMember.photo || staffMember.image ? (
                                                     <img
-                                                        src={`http://localhost:5000${(staffMember.photo || staffMember.image)?.startsWith('/') ? (staffMember.photo || staffMember.image) : `/uploads/${staffMember.photo || staffMember.image}`}`}
+                                                        src={getImageUrl(staffMember.photo || staffMember.image) || ''}
                                                         alt={staffMember.name}
                                                         className="w-16 h-16 rounded-full object-cover"
                                                     />
@@ -553,6 +562,24 @@ export function BookingFlow({
                                                 <Currency amount={selectedService.basePrice ? Number(selectedService.basePrice) : 0} locale={locale} />
                                             </p>
                                         </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4">
+                                    <p className="text-sm font-medium text-gray-700 mb-2">{locale === 'ar' ? 'طريقة الدفع' : 'Payment option'}</p>
+                                    <div className="space-y-2">
+                                        <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                            <input type="radio" name="paymentOption" checked={paymentOption === 'pay_50_now'} onChange={() => setPaymentOption('pay_50_now')} className="text-primary" />
+                                            <span>{locale === 'ar' ? 'ادفع 50٪ الآن (الباقي في المركز)' : 'Pay 50% now (rest at center)'}</span>
+                                        </label>
+                                        <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                            <input type="radio" name="paymentOption" checked={paymentOption === 'pay_full_online'} onChange={() => setPaymentOption('pay_full_online')} className="text-primary" />
+                                            <span>{locale === 'ar' ? 'ادفع 100٪ أونلاين' : 'Pay 100% online'}</span>
+                                        </label>
+                                        <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                            <input type="radio" name="paymentOption" checked={paymentOption === 'pay_at_center'} onChange={() => setPaymentOption('pay_at_center')} className="text-primary" />
+                                            <span>{locale === 'ar' ? 'ادفع بالكامل في المركز' : 'Pay full amount at center'}</span>
+                                        </label>
                                     </div>
                                 </div>
 

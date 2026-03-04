@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AdminLayout } from '@/components/AdminLayout';
 import { adminApi } from '@/lib/api';
 import { format, subDays } from 'date-fns';
 
@@ -23,9 +22,8 @@ type MonthlyData = {
   your_percentage: number;
 };
 
-type CommissionData = {
+type CommissionByPackageItem = {
   plan: string;
-  commission_rate: number;
   tenant_count: number;
   total_transactions: number;
   total_revenue: number;
@@ -33,10 +31,17 @@ type CommissionData = {
   tenant_earnings: number;
 };
 
+type RevenueByType = Record<
+  string,
+  { count: number; amount: number; platformFee: number; tenantRevenue: number }
+>;
+
 export default function FinancialOverviewPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [monthly, setMonthly] = useState<MonthlyData[]>([]);
-  const [commissionBreakdown, setCommissionBreakdown] = useState<CommissionData[]>([]);
+  const [commissionBreakdown, setCommissionBreakdown] = useState<CommissionByPackageItem[]>([]);
+  const [revenueByType, setRevenueByType] = useState<RevenueByType | null>(null);
+  const [billsSummary, setBillsSummary] = useState<Record<string, { count: number; totalAmount: number }> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<string>('30');
@@ -53,15 +58,19 @@ export default function FinancialOverviewPage() {
       const startDate = format(subDays(new Date(), parseInt(period)), "yyyy-MM-dd'T'00:00:00'Z'");
       const endDate = format(new Date(), "yyyy-MM-dd'T'23:59:59'Z'");
 
-      const [summaryRes, monthlyRes, commissionRes] = await Promise.all([
+      const [summaryRes, monthlyRes, commissionRes, revenueByTypeRes, billsRes] = await Promise.all([
         adminApi.getPlatformFinancialSummary(startDate, endDate),
         adminApi.getMonthlyComparison(12),
-        adminApi.getCommissionBreakdown(startDate, endDate),
+        adminApi.getCommissionByPackage(startDate, endDate),
+        adminApi.getRevenueByType(startDate, endDate),
+        adminApi.getBillsSummary(),
       ]);
 
       if (summaryRes.success) setSummary(summaryRes.data);
       if (monthlyRes.success) setMonthly(monthlyRes.data);
       if (commissionRes.success) setCommissionBreakdown(commissionRes.data);
+      if (revenueByTypeRes.success) setRevenueByType(revenueByTypeRes.data);
+      if (billsRes.success) setBillsSummary(billsRes.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
       console.error('Error:', err);
@@ -86,17 +95,29 @@ export default function FinancialOverviewPage() {
     return <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   }
 
-  // Calculate chart height based on data
+  // Calculate chart height based on data (safe numbers)
   const maxRevenue = Math.max(
-    ...(monthly.map((m) => m.total_revenue) || [0]),
-    summary?.total_revenue || 0
+    ...(monthly.map((m) => Number(m.total_revenue) || 0)),
+    Number(summary?.total_revenue) || 0,
+    1
   );
 
+  // Safe numeric values (API may return null for some fields)
+  const rev = Number(summary?.total_revenue) || 0;
+  const yourEarnings = Number(summary?.your_earnings) || 0;
+  const tenantEarnings = Number(summary?.tenant_earnings) || 0;
+  const totalTx = Number(summary?.total_transactions) || 0;
+
+  const typeLabels: Record<string, string> = {
+    booking: 'Bookings',
+    product_purchase: 'Products',
+    subscription: 'Subscriptions',
+  };
+
   return (
-    <AdminLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold">Financial Overview</h1>
             <p className="text-gray-600">Complete financial dashboard</p>
@@ -119,7 +140,7 @@ export default function FinancialOverviewPage() {
           <div className="rounded-lg border border-gray-600 bg-gray-800 p-6">
             <p className="text-sm font-medium text-gray-300">Total Revenue</p>
             <p className="mt-2 text-2xl font-bold text-white">
-              SAR {summary.total_revenue.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+              SAR {rev.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
             </p>
             <p className="text-xs text-gray-400">from all customers</p>
           </div>
@@ -127,11 +148,11 @@ export default function FinancialOverviewPage() {
           <div className="rounded-lg border border-green-600 bg-green-900 p-6">
             <p className="text-sm font-medium text-green-200">Your Commission</p>
             <p className="mt-2 text-2xl font-bold text-green-400">
-              SAR {summary.your_earnings.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+              SAR {yourEarnings.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
             </p>
             <p className="text-xs text-green-300">
-              {summary.total_revenue > 0
-                ? ((summary.your_earnings / summary.total_revenue) * 100).toFixed(1)
+              {rev > 0
+                ? ((yourEarnings / rev) * 100).toFixed(1)
                 : '0'}
               % of total
             </p>
@@ -140,11 +161,11 @@ export default function FinancialOverviewPage() {
           <div className="rounded-lg border border-blue-600 bg-blue-900 p-6">
             <p className="text-sm font-medium text-blue-200">Tenant Revenue</p>
             <p className="mt-2 text-2xl font-bold text-blue-400">
-              SAR {summary.tenant_earnings.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+              SAR {tenantEarnings.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
             </p>
             <p className="text-xs text-blue-300">
-              {summary.total_revenue > 0
-                ? ((summary.tenant_earnings / summary.total_revenue) * 100).toFixed(1)
+              {rev > 0
+                ? ((tenantEarnings / rev) * 100).toFixed(1)
                 : '0'}
               % of total
             </p>
@@ -153,16 +174,81 @@ export default function FinancialOverviewPage() {
           <div className="rounded-lg border border-purple-600 bg-purple-900 p-6">
             <p className="text-sm font-medium text-purple-200">Transactions</p>
             <p className="mt-2 text-2xl font-bold text-purple-400">
-              {summary.total_transactions.toLocaleString()}
+              {totalTx.toLocaleString()}
             </p>
             <p className="text-xs text-purple-300">
               avg: SAR{' '}
-              {summary.total_transactions > 0
-                ? (summary.total_revenue / summary.total_transactions).toLocaleString('en-SA', {
+              {totalTx > 0
+                ? (rev / totalTx).toLocaleString('en-SA', {
                     maximumFractionDigits: 0,
                   })
                 : '0'}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Bills summary */}
+      {billsSummary && (
+        <div className="card p-6">
+          <h2 className="mb-4 text-lg font-semibold text-white">Bills Summary</h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-lg border border-amber-600/50 bg-amber-900/20 p-4">
+              <p className="text-sm font-medium text-amber-200">Unpaid</p>
+              <p className="mt-1 text-xl font-bold text-amber-400">{billsSummary.UNPAID?.count ?? 0} bills</p>
+              <p className="text-xs text-amber-300">SAR {(billsSummary.UNPAID?.totalAmount ?? 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="rounded-lg border border-green-600/50 bg-green-900/20 p-4">
+              <p className="text-sm font-medium text-green-200">Paid</p>
+              <p className="mt-1 text-xl font-bold text-green-400">{billsSummary.PAID?.count ?? 0} bills</p>
+              <p className="text-xs text-green-300">SAR {(billsSummary.PAID?.totalAmount ?? 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="rounded-lg border border-gray-600 bg-gray-800 p-4">
+              <p className="text-sm font-medium text-gray-300">Expired</p>
+              <p className="mt-1 text-xl font-bold text-gray-400">{billsSummary.EXPIRED?.count ?? 0} bills</p>
+              <p className="text-xs text-gray-400">SAR {(billsSummary.EXPIRED?.totalAmount ?? 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revenue by type */}
+      {revenueByType && (
+        <div className="card p-6">
+          <h2 className="mb-4 text-lg font-semibold text-white">Revenue by Type</h2>
+          <div className="overflow-x-auto">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th className="text-right">Count</th>
+                  <th className="text-right">Amount</th>
+                  <th className="text-right">Platform Fee</th>
+                  <th className="text-right">Tenant Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(['booking', 'product_purchase', 'subscription'] as const).map((key) => {
+                  const row = revenueByType[key];
+                  if (!row) return null;
+                  return (
+                    <tr key={key}>
+                      <td>{typeLabels[key] || key}</td>
+                      <td className="text-right">{row.count}</td>
+                      <td className="text-right">
+                        SAR {(row.amount || 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="text-right text-green-400">
+                        SAR {(row.platformFee || 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="text-right">
+                        SAR {(row.tenantRevenue || 0).toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -192,14 +278,17 @@ export default function FinancialOverviewPage() {
             <div className="flex items-end justify-between gap-2 overflow-x-auto" style={{ height: '300px', minWidth: '100%' }}>
               {monthly.length > 0 ? (
                 monthly.map((month, idx) => {
-                  const totalHeight = Math.max((month.total_revenue / maxRevenue) * 100, 2);
-                  const yourHeight = Math.max((month.your_earnings / maxRevenue) * 100, 2);
-                  const tenantHeight = Math.max((month.tenant_earnings / maxRevenue) * 100, 2);
+                  const mRev = Number(month.total_revenue) || 0;
+                  const mYour = Number(month.your_earnings) || 0;
+                  const mTenant = Number(month.tenant_earnings) || 0;
+                  const totalHeight = Math.max(maxRevenue > 0 ? (mRev / maxRevenue) * 100 : 0, 2);
+                  const yourHeight = Math.max(maxRevenue > 0 ? (mYour / maxRevenue) * 100 : 0, 2);
+                  const tenantHeight = Math.max(maxRevenue > 0 ? (mTenant / maxRevenue) * 100 : 0, 2);
 
                   return (
                     <div key={idx} className="flex flex-1 flex-col items-center justify-end gap-1 min-w-max">
-                      <div className="w-8 rounded-t bg-gradient-to-b from-orange-400 to-orange-500" style={{ height: `${tenantHeight}%`, minHeight: '4px' }} title={`Tenant: SAR ${month.tenant_earnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}`}></div>
-                      <div className="w-8 bg-gradient-to-b from-green-400 to-green-500" style={{ height: `${yourHeight}%`, minHeight: '4px' }} title={`Commission: SAR ${month.your_earnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}`}></div>
+                      <div className="w-8 rounded-t bg-gradient-to-b from-orange-400 to-orange-500" style={{ height: `${tenantHeight}%`, minHeight: '4px' }} title={`Tenant: SAR ${mTenant.toLocaleString('en-SA', { maximumFractionDigits: 0 })}`}></div>
+                      <div className="w-8 bg-gradient-to-b from-green-400 to-green-500" style={{ height: `${yourHeight}%`, minHeight: '4px' }} title={`Commission: SAR ${mYour.toLocaleString('en-SA', { maximumFractionDigits: 0 })}`}></div>
                       <p className="mt-2 text-xs font-medium text-gray-600 whitespace-nowrap">
                         {format(new Date(month.month), 'MMM')}
                       </p>
@@ -227,24 +316,31 @@ export default function FinancialOverviewPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {monthly.map((month, idx) => (
-                    <tr key={idx}>
-                      <td>
-                        {format(new Date(month.month), 'MMMM yyyy')}
-                      </td>
-                      <td className="text-right">
-                        SAR {month.total_revenue.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
-                      </td>
-                      <td className="text-right font-semibold text-green-400">
-                        SAR {month.your_earnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
-                      </td>
-                      <td className="text-right">
-                        SAR {month.tenant_earnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
-                      </td>
-                      <td className="text-right">{month.transaction_count}</td>
-                      <td className="text-right font-semibold text-blue-400">{month.your_percentage}%</td>
-                    </tr>
-                  ))}
+                  {monthly.map((month, idx) => {
+                    const mRev = Number(month.total_revenue) || 0;
+                    const mYour = Number(month.your_earnings) || 0;
+                    const mTenant = Number(month.tenant_earnings) || 0;
+                    const mPct = month.your_percentage != null ? Number(month.your_percentage) : 0;
+                    const mCount = month.transaction_count != null ? Number(month.transaction_count) : 0;
+                    return (
+                      <tr key={idx}>
+                        <td>
+                          {format(new Date(month.month), 'MMMM yyyy')}
+                        </td>
+                        <td className="text-right">
+                          SAR {mRev.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="text-right font-semibold text-green-400">
+                          SAR {mYour.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="text-right">
+                          SAR {mTenant.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="text-right">{mCount}</td>
+                        <td className="text-right font-semibold text-blue-400">{mPct}%</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -252,18 +348,19 @@ export default function FinancialOverviewPage() {
         </div>
       )}
 
-      {/* Commission Breakdown by Plan */}
+      {/* Commission by Package */}
       {commissionBreakdown.length > 0 && (
         <div className="card p-6">
-          <h2 className="mb-6 text-lg font-semibold text-white">Commission by Subscription Plan</h2>
+          <h2 className="mb-6 text-lg font-semibold text-white">Commission by Subscription Package</h2>
           <div className="grid gap-6 md:grid-cols-2">
             {/* Pie Chart */}
             <div className="flex flex-col items-center justify-center">
               <div style={{ width: '200px', height: '200px' }} className="relative flex items-center justify-center">
                 <svg width="200" height="200" className="transform -rotate-90">
                   {commissionBreakdown.map((item, idx) => {
-                    const total = commissionBreakdown.reduce((sum, p) => sum + p.your_earnings, 0);
-                    const percentage = (item.your_earnings / total) * 100;
+                    const total = commissionBreakdown.reduce((sum, p) => sum + (Number(p.your_earnings) || 0), 0);
+                    const itemEarnings = Number(item.your_earnings) || 0;
+                    const percentage = total > 0 ? (itemEarnings / total) * 100 : 0;
                     const circumference = 2 * Math.PI * 60;
                     const offset = circumference * ((100 - percentage) / 100);
 
@@ -279,8 +376,8 @@ export default function FinancialOverviewPage() {
 
                     let cumulativeOffset = 0;
                     for (let i = 0; i < idx; i++) {
-                      cumulativeOffset +=
-                        (commissionBreakdown[i].your_earnings / total) * circumference;
+                      const prevEarnings = Number(commissionBreakdown[i].your_earnings) || 0;
+                      cumulativeOffset += total > 0 ? (prevEarnings / total) * circumference : 0;
                     }
 
                     return (
@@ -303,7 +400,7 @@ export default function FinancialOverviewPage() {
                   <p className="text-xl font-bold text-white">
                     SAR{' '}
                     {commissionBreakdown
-                      .reduce((sum, p) => sum + p.your_earnings, 0)
+                      .reduce((sum, p) => sum + (Number(p.your_earnings) || 0), 0)
                       .toLocaleString('en-SA', { maximumFractionDigits: 0 })}
                   </p>
                 </div>
@@ -321,8 +418,9 @@ export default function FinancialOverviewPage() {
                     '#EC4899',
                   ];
                   const color = colors[idx % colors.length];
-                  const total = commissionBreakdown.reduce((sum, p) => sum + p.your_earnings, 0);
-                  const percentage = ((item.your_earnings / total) * 100).toFixed(1);
+                  const total = commissionBreakdown.reduce((sum, p) => sum + (Number(p.your_earnings) || 0), 0);
+                  const itemEarnings = Number(item.your_earnings) || 0;
+                  const percentage = total > 0 ? ((itemEarnings / total) * 100).toFixed(1) : '0';
 
                   return (
                     <div key={idx} className="flex items-center gap-2 text-sm">
@@ -340,31 +438,35 @@ export default function FinancialOverviewPage() {
               <table className="admin-table">
                 <thead>
                   <tr>
-                    <th>Plan</th>
-                    <th className="text-right">Rate</th>
+                    <th>Package</th>
                     <th className="text-right">Tenants</th>
+                    <th className="text-right">Transactions</th>
                     <th className="text-right">Your Commission</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {commissionBreakdown.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="capitalize">{item.plan}</td>
-                      <td className="text-right">{item.commission_rate}%</td>
-                      <td className="text-right">{item.tenant_count}</td>
-                      <td className="text-right font-semibold text-green-400">
-                        SAR {item.your_earnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
-                      </td>
-                    </tr>
-                  ))}
+                  {commissionBreakdown.map((item, idx) => {
+                    const itemEarnings = Number(item.your_earnings) || 0;
+                    const tenantCount = item.tenant_count != null ? Number(item.tenant_count) : 0;
+                    const txCount = item.total_transactions != null ? Number(item.total_transactions) : 0;
+                    return (
+                      <tr key={idx}>
+                        <td>{item.plan}</td>
+                        <td className="text-right">{tenantCount}</td>
+                        <td className="text-right">{txCount}</td>
+                        <td className="text-right font-semibold text-green-400">
+                          SAR {itemEarnings.toLocaleString('en-SA', { maximumFractionDigits: 0 })}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         </div>
       )}
-      </div>
-    </AdminLayout>
+    </div>
   );
 }
 

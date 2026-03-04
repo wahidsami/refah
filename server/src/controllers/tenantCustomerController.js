@@ -5,6 +5,7 @@
 
 const db = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
  * Get all customers who have booked with this tenant
@@ -13,8 +14,6 @@ exports.getCustomers = async (req, res) => {
     try {
         const tenantId = req.tenant.id;
         const {
-            page = 1,
-            limit = 20,
             search = '',
             sortBy = 'lastVisit',
             sortOrder = 'DESC',
@@ -23,7 +22,7 @@ exports.getCustomers = async (req, res) => {
             minSpent = 0
         } = req.query;
 
-        const offset = (parseInt(page) - 1) * parseInt(limit);
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const customerType = req.query.customerType || ''; // 'service_only', 'product_only', 'both', or ''
 
         // Find all platform users who have appointments OR orders with this tenant
@@ -279,6 +278,9 @@ exports.getCustomers = async (req, res) => {
         });
 
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get customers error:', error);
         res.status(500).json({
             success: false,
@@ -702,6 +704,10 @@ exports.getCustomerHistory = async (req, res) => {
         const tenantId = req.tenant.id;
         const { id } = req.params;
         const { type, startDate, endDate, limit = 50 } = req.query;
+        const cappedLimit = Math.min(parseInt(limit, 10) || 50, DEFAULT_MAX_PAGE_SIZE);
+        if (cappedLimit < 1) {
+            return res.status(400).json({ success: false, message: 'Invalid limit' });
+        }
 
         // Get appointments
         const appointmentWhere = { platformUserId: id };
@@ -725,7 +731,7 @@ exports.getCustomerHistory = async (req, res) => {
                 }
             ],
             order: [['startTime', 'DESC']],
-            limit: type === 'order' ? 0 : parseInt(limit)
+            limit: type === 'order' ? 0 : cappedLimit
         });
 
         // Get orders

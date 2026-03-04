@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Approved – Please Pay</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #f3f4f6; margin: 0; padding: 0; direction: rtl; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #8B5ADF 0%, #FE01AB 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: #ffffff; margin: 0; font-size: 28px; font-weight: 700; }
+        .content { padding: 40px 30px; }
+        .message { font-size: 16px; color: #4b5563; line-height: 1.6; margin-bottom: 20px; }
+        .highlight { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-right: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 8px; color: #92400e; }
+        .cta-button { display: inline-block; background: linear-gradient(135deg, #8B5ADF 0%, #FE01AB 100%); color: #ffffff !important; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: 600; font-size: 18px; margin: 20px 0; }
+        .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+        .footer { background-color: #f9fafb; padding: 30px; text-align: center; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>تم قبول حسابك – يرجى الدفع خلال 48 ساعة</h1>
+            <p style="color: #fff; margin: 10px 0 0;">Your Account Is Approved — Please Pay Within 48 Hours</p>
+        </div>
+        <div class="content">
+            <p class="message">عزيزي {{tenantNameAr}} | Dear {{tenantName}},</p>
+            <p class="message">تم الموافقة على طلبك. لتفعيل اشتراكك يرجى إتمام الدفع خلال 48 ساعة.</p>
+            <p class="message">Your application has been approved. To activate your subscription, please complete payment within 48 hours.</p>
+            <div class="highlight">
+                <p style="margin: 0;"><strong>رقم الفاتورة | Bill:</strong> {{billNumber}}</p>
+                <p style="margin: 10px 0 0;"><strong>المبلغ | Amount:</strong> {{amount}} {{currency}}</p>
+                <p style="margin: 10px 0 0;"><strong>الموعد النهائي | Due:</strong> {{dueDate}}</p>
+            </div>
+            <div style="text-align: center;">
+                <a href="{{paymentUrl}}" class="cta-button">ادفع الآن | Pay Now</a>
+            </div>
+            <p class="message">يمكنك أيضاً الدفع من لوحة التحكم: الفواتير → ادفع الآن.</p>
+            <p class="message">You can also pay from your dashboard: My Bills → Pay Now.</p>
+            <div class="info-row"><span>رابط الدفع | Payment link:</span><span><a href="{{paymentUrl}}">{{paymentUrl}}</a></span></div>
+        </div>
+        <div class="footer">
+            <p><strong>منصة رفاه | Rifah Platform</strong></p>
+            <p>© 2024-2026 Rifah Platform. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

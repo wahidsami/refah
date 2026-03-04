@@ -146,6 +146,9 @@ const topUpWallet = async (req, res) => {
  */
 const getPaymentHistory = async (req, res) => {
     try {
+        const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
+
         const { type, status, startDate, endDate } = req.query;
         const platformUserId = req.userId;
 
@@ -161,22 +164,34 @@ const getPaymentHistory = async (req, res) => {
             if (endDate) where.createdAt[Op.lte] = new Date(endDate);
         }
 
-        const transactions = await db.Transaction.findAll({
+        const { count, rows: transactions } = await db.Transaction.findAndCountAll({
             where,
             include: [
-                { model: db.Appointment, include: [{ model: db.Service, as: 'service' }, { model: db.Staff, as: 'staff' }] },
+                { model: db.Appointment, as: 'appointment', include: [{ model: db.Service, as: 'service' }, { model: db.Staff, as: 'staff' }] },
+                { model: db.Order, as: 'order' },
                 { model: db.Tenant, as: 'tenant' },
                 { model: db.PaymentMethod, as: 'paymentMethod' }
             ],
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
             transactions,
-            count: transactions.length
+            count: transactions.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get payment history error:', error);
         res.status(500).json({
             success: false,

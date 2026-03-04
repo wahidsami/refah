@@ -4,6 +4,68 @@
  */
 
 const db = require('../models');
+const { checkResourceLimit } = require('../utils/tenantLimitsUtil');
+const { Op } = require('sequelize');
+const { getActiveSubscriptionForTenant } = require('../services/tenantSubscriptionService');
+
+/**
+ * Get all subscription resource limits and current usage for the tenant
+ */
+exports.getSubscriptionLimits = async (req, res) => {
+    try {
+        const tenantId = req.tenantId || req.tenant?.id;
+
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0, 0, 0, 0);
+
+        // Fetch tenant settings features (manually set per-tenant overrides)
+        const settings = await db.TenantSettings.findOne({ where: { tenantId } });
+        const tenantFeatures = settings?.features || {};
+
+        // Use shared service so subscription is always recognized (same as push/customer notification)
+        const subResult = await getActiveSubscriptionForTenant(tenantId, {
+            statuses: ['active', 'trial', 'APPROVED_FREE_ACTIVE']
+        });
+        const packageLimits = subResult?.package?.limits || {};
+
+        // Merge: package limits are the base, tenant-specific features can override
+        const mergedFeatures = { ...packageLimits, ...tenantFeatures };
+
+        // Fetch all 4 resource limits concurrently
+        const [staff, services, products, bookings] = await Promise.all([
+            checkResourceLimit(tenantId, 'maxStaff', async () => db.Staff.count({ where: { tenantId } })),
+            checkResourceLimit(tenantId, 'maxServices', async () => db.Service.count({ where: { tenantId } })),
+            checkResourceLimit(tenantId, 'maxProducts', async () => db.Product.count({ where: { tenantId } })),
+            checkResourceLimit(tenantId, 'maxBookingsPerMonth', async () => db.Appointment.count({
+                where: {
+                    tenantId,
+                    createdAt: { [Op.gte]: startOfMonth }
+                }
+            }))
+        ]);
+
+        const packageName = subResult?.package?.name || staff.packageName;
+        res.json({
+            success: true,
+            // Merged feature flags from package limits + tenant-specific overrides
+            limits: mergedFeatures,
+            data: {
+                packageName,
+                staff: { current: staff.current, limit: staff.limit, allowed: staff.allowed },
+                services: { current: services.current, limit: services.limit, allowed: services.allowed },
+                products: { current: products.current, limit: products.limit, allowed: products.allowed },
+                bookings: { current: bookings.current, limit: bookings.limit, allowed: bookings.allowed }
+            }
+        });
+    } catch (error) {
+        console.error('Get subscription limits error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch subscription limits'
+        });
+    }
+};
 
 /**
  * Get all settings for the tenant
@@ -103,7 +165,7 @@ exports.updateBusinessInfo = async (req, res) => {
         await tenant.update({
             name_en: name_en !== undefined ? name_en : tenant.name_en,
             name_ar: name_ar !== undefined ? name_ar : tenant.name_ar,
-            businessType: businessType || tenant.businessType,
+            businessType: businessType !== undefined ? (Array.isArray(businessType) ? businessType : [businessType]) : tenant.businessType,
             email: email !== undefined ? email : tenant.email,
             phone: phone !== undefined ? phone : tenant.phone,
             mobile: mobile !== undefined ? mobile : tenant.mobile,
@@ -246,8 +308,8 @@ exports.updateBookingSettings = async (req, res) => {
             newBookingSettings.allowAnyStaff = allowAnyStaff;
         }
         if (maxBookingsPerCustomerPerDay !== undefined) {
-            newBookingSettings.maxBookingsPerCustomerPerDay = maxBookingsPerCustomerPerDay === null || maxBookingsPerCustomerPerDay === '' 
-                ? null 
+            newBookingSettings.maxBookingsPerCustomerPerDay = maxBookingsPerCustomerPerDay === null || maxBookingsPerCustomerPerDay === ''
+                ? null
                 : Math.max(1, parseInt(maxBookingsPerCustomerPerDay));
         }
         if (allowWalkInBooking !== undefined) {
@@ -284,7 +346,8 @@ exports.updateNotificationSettings = async (req, res) => {
             enableEmailNotifications,
             enableSmsNotifications,
             enableWhatsAppNotifications,
-            enableVoiceAlerts
+            enableVoiceAlerts,
+            remindRemainderToCollect
         } = req.body;
 
         let [settings] = await db.TenantSettings.findOrCreate({
@@ -292,11 +355,17 @@ exports.updateNotificationSettings = async (req, res) => {
             defaults: { tenantId }
         });
 
+        const notificationSettingsJson = { ...(settings.notificationSettings || {}) };
+        if (remindRemainderToCollect !== undefined) {
+            notificationSettingsJson.remindRemainderToCollect = !!remindRemainderToCollect;
+        }
+
         await settings.update({
             enableEmailNotifications: enableEmailNotifications !== undefined ? enableEmailNotifications : settings.enableEmailNotifications,
             enableSmsNotifications: enableSmsNotifications !== undefined ? enableSmsNotifications : settings.enableSmsNotifications,
             enableWhatsAppNotifications: enableWhatsAppNotifications !== undefined ? enableWhatsAppNotifications : settings.enableWhatsAppNotifications,
-            enableVoiceAlerts: enableVoiceAlerts !== undefined ? enableVoiceAlerts : settings.enableVoiceAlerts
+            enableVoiceAlerts: enableVoiceAlerts !== undefined ? enableVoiceAlerts : settings.enableVoiceAlerts,
+            notificationSettings: notificationSettingsJson
         });
 
         res.json({
@@ -325,7 +394,8 @@ exports.updatePaymentSettings = async (req, res) => {
             acceptCash,
             acceptCard,
             acceptWallet,
-            payoutBankAccount
+            payoutBankAccount,
+            defaultDeliveryFee
         } = req.body;
 
         let [settings] = await db.TenantSettings.findOrCreate({
@@ -333,12 +403,17 @@ exports.updatePaymentSettings = async (req, res) => {
             defaults: { tenantId }
         });
 
-        await settings.update({
+        const updateData = {
             acceptCash: acceptCash !== undefined ? acceptCash : settings.acceptCash,
             acceptCard: acceptCard !== undefined ? acceptCard : settings.acceptCard,
             acceptWallet: acceptWallet !== undefined ? acceptWallet : settings.acceptWallet,
             payoutBankAccount: payoutBankAccount !== undefined ? payoutBankAccount : settings.payoutBankAccount
-        });
+        };
+        if (defaultDeliveryFee !== undefined) {
+            const fee = parseFloat(defaultDeliveryFee);
+            updateData.defaultDeliveryFee = isNaN(fee) || fee < 0 ? 0 : fee;
+        }
+        await settings.update(updateData);
 
         res.json({
             success: true,
@@ -443,7 +518,7 @@ exports.updateAppearanceSettings = async (req, res) => {
 exports.uploadLogo = async (req, res) => {
     try {
         const tenantId = req.tenant.id;
-        
+
         if (!req.file) {
             return res.status(400).json({
                 success: false,
@@ -485,7 +560,7 @@ exports.uploadLogo = async (req, res) => {
 exports.uploadCoverImage = async (req, res) => {
     try {
         const tenantId = req.tenant.id;
-        
+
         if (!req.file) {
             return res.status(400).json({
                 success: false,

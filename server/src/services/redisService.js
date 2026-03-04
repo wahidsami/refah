@@ -42,17 +42,23 @@ function getRedisClient() {
     return redisClient;
 }
 
+/** Error code when Redis is down or lock call fails (fail closed → 503) */
+const REDIS_UNAVAILABLE = 'REDIS_UNAVAILABLE';
+
 /**
- * Acquire a lock for a booking slot
+ * Acquire a lock for a booking slot.
+ * Fail closed: if Redis is unavailable or errors, throws (do not proceed with booking).
  * @param {string} key - Lock key (e.g., "booking:staffId:startTime")
  * @param {number} ttl - Time to live in seconds (default 300 = 5 minutes)
  * @returns {Promise<boolean>} - true if lock acquired, false if already locked
+ * @throws {Error} with code REDIS_UNAVAILABLE if Redis unavailable or on Redis error
  */
 async function acquireLock(key, ttl = 300) {
     const client = getRedisClient();
     if (!client) {
-        // If Redis not available, skip locking (not ideal but allows system to work)
-        return true;
+        const err = new Error('Redis unavailable');
+        err.code = REDIS_UNAVAILABLE;
+        throw err;
     }
 
     try {
@@ -62,11 +68,19 @@ async function acquireLock(key, ttl = 300) {
             await client.expire(lockKey, ttl);
             return true;
         }
+        try {
+            require('../utils/metrics').recordRedisLockFailure('contention');
+        } catch (_) { /* metrics optional */ }
         return false;
     } catch (error) {
+        try {
+            require('../utils/metrics').recordRedisLockFailure('error');
+        } catch (_) { /* metrics optional */ }
         console.error('Redis lock error:', error);
-        // On error, allow operation (fail open)
-        return true;
+        const err = new Error('Redis lock error');
+        err.code = REDIS_UNAVAILABLE;
+        err.cause = error;
+        throw err;
     }
 }
 
@@ -105,11 +119,44 @@ async function isLocked(key) {
     }
 }
 
+/**
+ * Ping Redis (for readiness checks).
+ * @returns {Promise<boolean>} true if ping succeeded
+ */
+async function ping() {
+    const client = getRedisClient();
+    if (!client) return false;
+    try {
+        await client.ping();
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+/**
+ * Close Redis connection (for graceful shutdown).
+ * @returns {Promise<void>}
+ */
+async function close() {
+    if (!redisClient) return;
+    try {
+        await redisClient.quit();
+    } catch (error) {
+        console.error('Redis close error:', error);
+    } finally {
+        redisClient = null;
+    }
+}
+
 module.exports = {
     initRedis,
     getRedisClient,
     acquireLock,
     releaseLock,
-    isLocked
+    isLocked,
+    ping,
+    close,
+    REDIS_UNAVAILABLE
 };
 

@@ -31,10 +31,15 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'appointmentId',
                 as: 'paymentTransactions'
             });
+            Appointment.hasOne(models.AppointmentReminder, {
+                foreignKey: 'appointmentId',
+                as: 'reminder'
+            });
         }
 
         /**
-         * Calculate revenue breakdown based on service pricing
+         * Calculate revenue breakdown based on service pricing.
+         * Formula: (raw price + platform fee) = subtotal; tax = 15% of subtotal; final = subtotal + tax.
          * @param {Object} service - Service object with pricing info
          * @param {Object} staff - Staff object with commission rate
          * @returns {Object} Revenue breakdown
@@ -45,11 +50,12 @@ module.exports = (sequelize, DataTypes) => {
             const commissionRate = parseFloat(service.commissionRate || 10);
             const employeeCommissionRate = parseFloat(staff?.commissionRate || 0);
 
-            const taxAmount = rawPrice * (taxRate / 100);
             const platformFee = rawPrice * (commissionRate / 100);
-            const finalPrice = rawPrice + taxAmount + platformFee;
+            const subtotalBeforeTax = rawPrice + platformFee;
+            const taxAmount = subtotalBeforeTax * (taxRate / 100);
+            const finalPrice = subtotalBeforeTax + taxAmount;
 
-            const tenantRevenue = rawPrice + taxAmount; // Tenant gets raw + tax
+            const tenantRevenue = rawPrice + taxAmount; // Tenant gets raw + tax collected
             const employeeRevenue = rawPrice; // Employee commission is calculated on raw price
             const employeeCommission = employeeRevenue * (employeeCommissionRate / 100);
 
@@ -122,8 +128,9 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         status: {
-            type: DataTypes.ENUM('pending', 'confirmed', 'completed', 'cancelled', 'no_show'),
-            defaultValue: 'pending'
+            type: DataTypes.ENUM('pending', 'confirmed', 'started', 'completed', 'cancelled', 'no_show'),
+            defaultValue: 'pending',
+            comment: 'started = service in progress (customer with employee)'
         },
         price: {
             type: DataTypes.DECIMAL(10, 2),
@@ -211,6 +218,27 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             defaultValue: 0,
             comment: 'Total amount paid so far'
+        },
+        tipAmount: {
+            type: DataTypes.DECIMAL(10, 2),
+            allowNull: true,
+            defaultValue: null,
+            comment: 'Optional tip amount left by customer after service',
+            field: 'tip_amount'
+        },
+        tipPaidAt: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            defaultValue: null,
+            comment: 'When tip was recorded',
+            field: 'tip_paid_at'
+        },
+        tipPaymentMethod: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            defaultValue: null,
+            comment: 'cash, card, wallet, etc.',
+            field: 'tip_payment_method'
         },
         notes: {
             type: DataTypes.TEXT,

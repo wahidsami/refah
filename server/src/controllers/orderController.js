@@ -14,6 +14,7 @@ const createOrder = async (req, res) => {
             paymentMethod, // 'online', 'cash_on_delivery', 'pay_on_visit'
             deliveryType = 'pickup', // 'pickup' or 'delivery'
             shippingAddress,
+            shippingFee,
             pickupDate,
             notes
         } = req.body;
@@ -58,6 +59,7 @@ const createOrder = async (req, res) => {
             paymentMethod,
             deliveryType,
             shippingAddress,
+            shippingFee,
             pickupDate,
             notes
         });

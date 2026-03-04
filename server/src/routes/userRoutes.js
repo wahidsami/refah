@@ -19,8 +19,15 @@ router.put('/password', authenticateUser, userController.changePassword);
 // Get user bookings
 router.get('/bookings', authenticateUser, userController.getUserBookings);
 
+// Add tip to completed appointment
+router.post('/bookings/:id/tip', authenticateUser, userController.addAppointmentTip);
+
 // Get services history
 router.get('/services-history', authenticateUser, userController.getServicesHistory);
+
+// Notifications (inbox)
+router.get('/notifications', authenticateUser, userController.getNotifications);
+router.patch('/notifications/:id/read', authenticateUser, userController.markNotificationRead);
 
 // Payment Methods
 router.get('/payment-methods', authenticateUser, paymentMethodController.getPaymentMethods);

@@ -240,6 +240,9 @@ class BookingConflictDetector {
             );
 
             if (hasConflicts) {
+                try {
+                    require('../utils/metrics').recordBookingConflict();
+                } catch (_) { /* metrics optional */ }
                 await transaction.rollback();
                 return {
                     success: false,

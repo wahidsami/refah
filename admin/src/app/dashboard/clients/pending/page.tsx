@@ -9,7 +9,7 @@ interface Tenant {
   id: string;
   name: string;
   nameAr?: string;
-  businessType: string;
+  businessType: string[] | string;
   email: string;
   phone: string;
   city: string;
@@ -144,17 +144,19 @@ export default function PendingClientsPage() {
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-warning/20 rounded-lg flex items-center justify-center">
                       <span className="text-2xl">
-                        {tenant.businessType === "salon" && "💇"}
-                        {tenant.businessType === "spa" && "🧖"}
-                        {tenant.businessType === "barbershop" && "💈"}
-                        {tenant.businessType === "beauty_center" && "💅"}
-                        {!tenant.businessType && "🏢"}
+                        {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "salon" && "💇"}
+                        {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "spa" && "🧖"}
+                        {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "barbershop" && "💈"}
+                        {(Array.isArray(tenant.businessType) ? tenant.businessType[0] : tenant.businessType) === "beauty_center" && "💅"}
+                        {!tenant.businessType || (Array.isArray(tenant.businessType) && tenant.businessType.length === 0) ? "🏢" : null}
                       </span>
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-white">{tenant.name}</h3>
                       <p className="text-sm text-dark-400 capitalize">
-                        {tenant.businessType?.replace("_", " ")} • {tenant.city || "Location not set"}
+                        {Array.isArray(tenant.businessType)
+                          ? tenant.businessType.map(t => t.replace("_", " ")).join(", ")
+                          : tenant.businessType?.replace("_", " ")} • {tenant.city || "Location not set"}
                       </p>
                     </div>
                   </div>

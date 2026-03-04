@@ -28,7 +28,7 @@ class ProductionLogger {
             level: 'ERROR',
             message,
             error: error ? error.message : null,
-            stack: error ? error.stack : null,
+            ...(this.isDevelopment && error && { stack: error.stack }),
             context
         };
 

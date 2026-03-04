@@ -1,34 +1,23 @@
 const db = require('../models');
 const { Op } = require('sequelize');
+const { getActiveSubscriptionForTenant } = require('../services/tenantSubscriptionService');
 
 /**
- * Middleware to check if tenant has active subscription
+ * Middleware to check if tenant has active subscription (uses shared service for correct recognition)
  */
 exports.requireActiveSubscription = async (req, res, next) => {
     try {
-        const { tenantId } = req;
-        
+        const tenantId = req.tenantId || req.tenant?.id;
         if (!tenantId) {
             return res.status(401).json({
                 success: false,
                 message: 'Authentication required'
             });
         }
-        
-        // Get tenant's subscription
-        const subscription = await db.TenantSubscription.findOne({
-            where: {
-                tenantId,
-                status: { [Op.in]: ['trial', 'active'] }
-            },
-            include: [
-                {
-                    model: db.SubscriptionPackage,
-                    as: 'package'
-                }
-            ]
+        const result = await getActiveSubscriptionForTenant(tenantId, {
+            statuses: ['trial', 'active', 'APPROVED_FREE_ACTIVE']
         });
-        
+        const subscription = result?.subscription;
         if (!subscription) {
             return res.status(403).json({
                 success: false,
@@ -36,10 +25,7 @@ exports.requireActiveSubscription = async (req, res, next) => {
                 code: 'SUBSCRIPTION_REQUIRED'
             });
         }
-        
-        // Check if subscription has expired
         if (new Date() > subscription.currentPeriodEnd) {
-            // Check grace period
             if (!subscription.isInGracePeriod()) {
                 return res.status(403).json({
                     success: false,
@@ -48,11 +34,8 @@ exports.requireActiveSubscription = async (req, res, next) => {
                 });
             }
         }
-        
-        // Attach subscription to request
         req.subscription = subscription;
         req.packageLimits = subscription.package.limits;
-        
         next();
     } catch (error) {
         console.error('Subscription check error:', error);

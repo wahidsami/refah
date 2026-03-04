@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { StaffCard } from './StaffCard';
 import { useTenant } from '../context/TenantContext';
-import { publicAPI, Staff } from '../lib/api';
+import { getImageUrl, publicAPI, Staff } from '../lib/api';
 
 export const AboutPage: React.FC = () => {
   const { tenantId, pageData, tenant } = useTenant();
@@ -37,14 +37,10 @@ export const AboutPage: React.FC = () => {
   }, [tenantId]);
 
   // Get facilities images from About Us data
-  const galleryImages = aboutUsData?.facilitiesImages?.map((img: string) => {
-    // Normalize image path
-    const normalizedPath = img.startsWith('/uploads/') ? img : `/uploads/${img}`;
-    return {
-      url: `http://localhost:5000${normalizedPath}`,
-      caption: 'Our Facility',
-    };
-  }) || [];
+  const galleryImages = aboutUsData?.facilitiesImages?.map((img: string) => ({
+    url: getImageUrl(img),
+    caption: 'Our Facility',
+  })) || [];
 
   const nextGallerySlide = () => {
     setGalleryIndex((prev) => (prev + 1) % galleryImages.length);
@@ -95,14 +91,8 @@ export const AboutPage: React.FC = () => {
   const aboutBanner = pageData?.pageBanners?.about;
   
   // Normalize banner image path
-  const bannerImage = aboutBanner
-    ? `http://localhost:5000${aboutBanner.startsWith('/uploads/') ? aboutBanner : `/uploads/${aboutBanner}`}`
-    : null;
-  
-  // Hero image from About Us data (fallback)
-  const heroImage = bannerImage || (aboutUsData?.heroImage 
-    ? `http://localhost:5000${aboutUsData.heroImage.startsWith('/uploads/') ? aboutUsData.heroImage : `/uploads/${aboutUsData.heroImage}`}`
-    : 'https://images.unsplash.com/photo-1754534128045-ea1cfd09fb8c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxsdXh1cnklMjBzcGElMjBhbWJpYW5jZXxlbnwxfHx8fDE3NjQzNDkyOTJ8MA&ixlib=rb-4.1.0&q=80&w=1080');
+  const bannerImage = aboutBanner ? getImageUrl(aboutBanner) : null;
+  const heroImage = bannerImage || (aboutUsData?.heroImage ? getImageUrl(aboutUsData.heroImage) : 'https://images.unsplash.com/photo-1754534128045-ea1cfd09fb8c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxsdXh1cnklMjBzcGElMjBhbWJpYW5jZXxlbnwxfHx8fDE3NjQzNDkyOTJ8MA&ixlib=rb-4.1.0&q=80&w=1080');
 
   return (
     <div className="min-h-screen bg-gray-50 mb-8">
@@ -149,7 +139,7 @@ export const AboutPage: React.FC = () => {
                   )}
                   {mission.type === 'image' && mission.imageUrl && (
                     <img 
-                      src={`http://localhost:5000${mission.imageUrl}`} 
+                      src={getImageUrl(mission.imageUrl)} 
                       alt={mission.titleEn} 
                       className="w-24 h-24 object-cover rounded-full mx-auto mb-4"
                       onError={(e) => {
@@ -182,7 +172,7 @@ export const AboutPage: React.FC = () => {
                   )}
                   {vision.type === 'image' && vision.imageUrl && (
                     <img 
-                      src={`http://localhost:5000${vision.imageUrl}`} 
+                      src={getImageUrl(vision.imageUrl)} 
                       alt={vision.titleEn} 
                       className="w-24 h-24 object-cover rounded-full mx-auto mb-4"
                       onError={(e) => {
@@ -215,7 +205,7 @@ export const AboutPage: React.FC = () => {
                   )}
                   {value.type === 'image' && value.imageUrl && (
                     <img 
-                      src={`http://localhost:5000${value.imageUrl}`} 
+                      src={getImageUrl(value.imageUrl)} 
                       alt={value.titleEn} 
                       className="w-24 h-24 object-cover rounded-full mx-auto mb-4"
                       onError={(e) => {
@@ -363,7 +353,7 @@ export const AboutPage: React.FC = () => {
               )}
               {aboutUsData.finalWordType === 'image' && aboutUsData.finalWordImageUrl && (
                 <img 
-                  src={`http://localhost:5000${aboutUsData.finalWordImageUrl}`} 
+                  src={getImageUrl(aboutUsData.finalWordImageUrl)} 
                   alt={aboutUsData.finalWordTitleEn} 
                   className="w-32 h-32 object-cover rounded-full mx-auto mb-4"
                   onError={(e) => {

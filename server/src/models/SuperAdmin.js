@@ -34,7 +34,7 @@ module.exports = (sequelize, DataTypes) => {
         permissions: {
             type: DataTypes.JSONB,
             defaultValue: {
-                tenants: { view: true, create: true, edit: true, delete: false, approve: true },
+                tenants: { view: true, create: true, edit: true, delete: true, approve: true },
                 users: { view: true, create: false, edit: true, delete: false },
                 financial: { view: true, export: true, refund: false },
                 settings: { view: true, edit: false }

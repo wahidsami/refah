@@ -8,12 +8,28 @@
 
 'use strict';
 
+async function safeCreateTable(queryInterface, tableName, attributes) {
+  try {
+    await queryInterface.createTable(tableName, attributes);
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) throw err;
+  }
+}
+
+async function safeAddIndex(queryInterface, tableName, columns, options = {}) {
+  try {
+    await queryInterface.addIndex(tableName, columns, options);
+  } catch (err) {
+    if (!err.message || !err.message.includes('already exists')) throw err;
+  }
+}
+
 module.exports = {
   async up(queryInterface, Sequelize) {
     const { DataTypes } = Sequelize;
 
     // Create staff_shifts table
-    await queryInterface.createTable('staff_shifts', {
+    await safeCreateTable(queryInterface, 'staff_shifts', {
       id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
@@ -98,18 +114,18 @@ module.exports = {
     });
 
     // Create indexes for staff_shifts
-    await queryInterface.addIndex('staff_shifts', ['staff_id', 'day_of_week'], {
+    await safeAddIndex(queryInterface, 'staff_shifts', ['staff_id', 'day_of_week'], {
       name: 'idx_staff_shifts_staff_day'
     });
-    await queryInterface.addIndex('staff_shifts', ['staff_id', 'specific_date'], {
+    await safeAddIndex(queryInterface, 'staff_shifts', ['staff_id', 'specific_date'], {
       name: 'idx_staff_shifts_staff_date'
     });
-    await queryInterface.addIndex('staff_shifts', ['is_active'], {
+    await safeAddIndex(queryInterface, 'staff_shifts', ['is_active'], {
       name: 'idx_staff_shifts_active'
     });
 
     // Create staff_breaks table
-    await queryInterface.createTable('staff_breaks', {
+    await safeCreateTable(queryInterface, 'staff_breaks', {
       id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
@@ -199,18 +215,18 @@ module.exports = {
     });
 
     // Create indexes for staff_breaks
-    await queryInterface.addIndex('staff_breaks', ['staff_id', 'day_of_week'], {
+    await safeAddIndex(queryInterface, 'staff_breaks', ['staff_id', 'day_of_week'], {
       name: 'idx_staff_breaks_staff_day'
     });
-    await queryInterface.addIndex('staff_breaks', ['staff_id', 'specific_date'], {
+    await safeAddIndex(queryInterface, 'staff_breaks', ['staff_id', 'specific_date'], {
       name: 'idx_staff_breaks_staff_date'
     });
-    await queryInterface.addIndex('staff_breaks', ['is_active'], {
+    await safeAddIndex(queryInterface, 'staff_breaks', ['is_active'], {
       name: 'idx_staff_breaks_active'
     });
 
     // Create staff_time_off table
-    await queryInterface.createTable('staff_time_off', {
+    await safeCreateTable(queryInterface, 'staff_time_off', {
       id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
@@ -280,15 +296,15 @@ module.exports = {
     });
 
     // Create indexes for staff_time_off
-    await queryInterface.addIndex('staff_time_off', ['staff_id', 'start_date', 'end_date'], {
+    await safeAddIndex(queryInterface, 'staff_time_off', ['staff_id', 'start_date', 'end_date'], {
       name: 'idx_staff_time_off_staff_dates'
     });
-    await queryInterface.addIndex('staff_time_off', ['is_approved'], {
+    await safeAddIndex(queryInterface, 'staff_time_off', ['is_approved'], {
       name: 'idx_staff_time_off_approved'
     });
 
     // Create staff_schedule_overrides table
-    await queryInterface.createTable('staff_schedule_overrides', {
+    await safeCreateTable(queryInterface, 'staff_schedule_overrides', {
       id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
@@ -352,14 +368,14 @@ module.exports = {
     });
 
     // Create unique constraint and indexes for staff_schedule_overrides
-    await queryInterface.addIndex('staff_schedule_overrides', ['staff_id', 'date'], {
+    await safeAddIndex(queryInterface, 'staff_schedule_overrides', ['staff_id', 'date'], {
       unique: true,
       name: 'unique_staff_date_override'
     });
-    await queryInterface.addIndex('staff_schedule_overrides', ['staff_id', 'date'], {
+    await safeAddIndex(queryInterface, 'staff_schedule_overrides', ['staff_id', 'date'], {
       name: 'idx_staff_overrides_staff_date'
     });
-    await queryInterface.addIndex('staff_schedule_overrides', ['is_available'], {
+    await safeAddIndex(queryInterface, 'staff_schedule_overrides', ['is_available'], {
       name: 'idx_staff_overrides_available'
     });
   },

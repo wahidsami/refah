@@ -39,7 +39,7 @@ module.exports = (sequelize, DataTypes) => {
         },
         platformUserId: {
             type: DataTypes.UUID,
-            allowNull: false,
+            allowNull: true,
             references: {
                 model: 'platform_users',
                 key: 'id'
@@ -87,7 +87,7 @@ module.exports = (sequelize, DataTypes) => {
             defaultValue: 'SAR'
         },
         type: {
-            type: DataTypes.ENUM('booking', 'product_purchase', 'refund', 'wallet_topup', 'loyalty_redemption'),
+            type: DataTypes.ENUM('booking', 'product_purchase', 'refund', 'wallet_topup', 'loyalty_redemption', 'subscription'),
             allowNull: false
         },
         status: {

@@ -8,17 +8,18 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { Op } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 // Configure multer for service image uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadPath = path.join(__dirname, '../../uploads/tenants/services');
-        
+
         // Create directory if it doesn't exist
         if (!fs.existsSync(uploadPath)) {
             fs.mkdirSync(uploadPath, { recursive: true });
         }
-        
+
         cb(null, uploadPath);
     },
     filename: function (req, file, cb) {
@@ -50,13 +51,17 @@ const upload = multer({
 exports.uploadImage = upload.single('image');
 
 /**
- * Calculate final price based on raw price, tax, and commission
+ * Calculate final price: (raw + platform fee) then tax on that sum.
+ * Formula: subtotal = raw + platform fee; tax = 15% of subtotal; final = subtotal + tax.
  */
 function calculateFinalPrice(rawPrice, taxRate, commissionRate) {
     const raw = parseFloat(rawPrice || 0);
-    const tax = raw * (parseFloat(taxRate || 15) / 100);
-    const commission = raw * (parseFloat(commissionRate || 10) / 100);
-    return parseFloat((raw + tax + commission).toFixed(2));
+    const tr = parseFloat(taxRate || 15) / 100;
+    const cr = parseFloat(commissionRate || 10) / 100;
+    const platformFee = raw * cr;
+    const subtotalBeforeTax = raw + platformFee;
+    const taxAmount = subtotalBeforeTax * tr;
+    return parseFloat((subtotalBeforeTax + taxAmount).toFixed(2));
 }
 
 /**
@@ -69,7 +74,7 @@ async function getTenantSettings(tenantId) {
         const globalSettings = await db.GlobalSettings.findOne({
             order: [['updatedAt', 'DESC']]
         });
-        
+
         if (globalSettings) {
             return {
                 commissionRate: parseFloat(globalSettings.serviceCommissionRate),
@@ -79,7 +84,7 @@ async function getTenantSettings(tenantId) {
     } catch (error) {
         console.error('Failed to fetch global settings:', error);
     }
-    
+
     // Return defaults if not found
     return {
         commissionRate: 10.00,
@@ -88,16 +93,43 @@ async function getTenantSettings(tenantId) {
 }
 
 /**
+ * Get all service categories
+ * GET /api/v1/tenant/services/categories
+ */
+exports.getServiceCategories = async (req, res) => {
+    try {
+        const categories = await db.ServiceCategory.findAll({
+            where: { isActive: true },
+            order: [['sortOrder', 'ASC'], ['name_en', 'ASC']],
+            attributes: ['id', 'name_en', 'name_ar', 'slug', 'icon', 'sortOrder']
+        });
+
+        res.json({
+            success: true,
+            categories
+        });
+    } catch (error) {
+        console.error('Get service categories error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch service categories',
+            error: error.message
+        });
+    }
+};
+
+/**
  * Get all services for the authenticated tenant
  * GET /api/v1/tenant/services
  */
 exports.getServices = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const tenantId = req.tenantId;
         const { isActive, category, search } = req.query;
 
         const where = { tenantId };
-        
+
         if (isActive !== undefined) {
             where.isActive = isActive === 'true';
         }
@@ -115,7 +147,7 @@ exports.getServices = async (req, res) => {
             ];
         }
 
-        const services = await db.Service.findAll({
+        const { count, rows: services } = await db.Service.findAndCountAll({
             where,
             include: [
                 {
@@ -127,15 +159,26 @@ exports.getServices = async (req, res) => {
                     attributes: ['id', 'name', 'photo', 'isActive']
                 }
             ],
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
             services,
-            count: services.length
+            count: services.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get services error:', error);
         res.status(500).json({
             success: false,
@@ -215,6 +258,8 @@ exports.createService = async (req, res) => {
             whatToExpect, // JSON string or array of {en, ar} objects
             hasOffer,
             offerDetails,
+            offerFrom,
+            offerTo,
             hasGift,
             giftType,
             giftDetails,
@@ -238,6 +283,20 @@ exports.createService = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Valid raw price is required'
+            });
+        }
+
+        // Enforce maxServices limit
+        const { checkResourceLimit } = require('../utils/tenantLimitsUtil');
+        const limitCheck = await checkResourceLimit(tenantId, 'maxServices', async () => {
+            return await db.Service.count({ where: { tenantId } });
+        });
+
+        if (!limitCheck.allowed) {
+            await transaction.rollback();
+            return res.status(403).json({
+                success: false,
+                message: `Upgrade your subscription to add more services. Current plan (${limitCheck.packageName}) limit: ${limitCheck.limit}`
             });
         }
 
@@ -345,6 +404,8 @@ exports.createService = async (req, res) => {
             whatToExpect: whatToExpectArray,
             hasOffer: hasOffer === true || hasOffer === 'true',
             offerDetails: offerDetails || null,
+            offerFrom: offerFrom || null,
+            offerTo: offerTo || null,
             hasGift: hasGift === true || hasGift === 'true',
             giftType: giftType || null,
             giftDetails: giftDetails || null,
@@ -389,7 +450,7 @@ exports.createService = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded file if service creation fails
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
@@ -427,6 +488,8 @@ exports.updateService = async (req, res) => {
             whatToExpect,
             hasOffer,
             offerDetails,
+            offerFrom,
+            offerTo,
             hasGift,
             giftType,
             giftDetails,
@@ -550,6 +613,8 @@ exports.updateService = async (req, res) => {
         service.whatToExpect = whatToExpectArray;
         if (hasOffer !== undefined) service.hasOffer = hasOffer === true || hasOffer === 'true';
         if (offerDetails !== undefined) service.offerDetails = offerDetails || null;
+        if (offerFrom !== undefined) service.offerFrom = offerFrom || null;
+        if (offerTo !== undefined) service.offerTo = offerTo || null;
         if (hasGift !== undefined) service.hasGift = hasGift === true || hasGift === 'true';
         if (giftType !== undefined) service.giftType = giftType || null;
         if (giftDetails !== undefined) service.giftDetails = giftDetails || null;
@@ -566,7 +631,7 @@ exports.updateService = async (req, res) => {
                     fs.unlinkSync(oldImagePath);
                 }
             }
-            
+
             // Set new image path
             service.image = req.file.path.replace(/\\/g, '/').split('uploads/')[1];
         }
@@ -618,7 +683,7 @@ exports.updateService = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded file if update fails
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);

@@ -1,0 +1,37 @@
+src/app/[locale]/dashboard/schedules/page.tsx(333,28): error TS7006: Parameter 'shift' implicitly has an 'any' type.
+src/app/[locale]/dashboard/schedules/page.tsx(346,28): error TS7006: Parameter 'breakItem' implicitly has an 'any' type.
+src/app/[locale]/dashboard/schedules/page.tsx(359,28): error TS7006: Parameter 'item' implicitly has an 'any' type.
+src/app/[locale]/dashboard/schedules/page.tsx(372,28): error TS7006: Parameter 'override' implicitly has an 'any' type.
+src/app/[locale]/dashboard/schedules/page.tsx(575,18): error TS2304: Cannot find name 'Edit'.
+src/app/[locale]/dashboard/schedules/page.tsx(578,18): error TS2304: Cannot find name 'Trash2'.
+src/app/[locale]/dashboard/schedules/page.tsx(631,18): error TS2304: Cannot find name 'Edit'.
+src/app/[locale]/dashboard/schedules/page.tsx(634,18): error TS2304: Cannot find name 'Trash2'.
+src/app/[locale]/dashboard/schedules/page.tsx(691,18): error TS2304: Cannot find name 'Edit'.
+src/app/[locale]/dashboard/schedules/page.tsx(694,18): error TS2304: Cannot find name 'Trash2'.
+src/app/[locale]/register/page.tsx(609,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(620,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(639,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(650,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(669,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(680,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(699,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(710,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(729,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(740,61): error TS7006: Parameter 'prev' implicitly has an 'any' type.
+src/app/[locale]/register/page.tsx(846,27): error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+src/app/[locale]/register/page.tsx(1238,44): error TS2769: No overload matches this call.
+  Overload 1 of 3, '(name: string, value: string | Blob): void', gave the following error.
+    Argument of type '{}' is not assignable to parameter of type 'string | Blob'.
+  Overload 2 of 3, '(name: string, value: string): void', gave the following error.
+    Argument of type '{}' is not assignable to parameter of type 'string'.
+  Overload 3 of 3, '(name: string, blobValue: Blob, filename?: string | undefined): void', gave the following error.
+    Argument of type '{}' is not assignable to parameter of type 'Blob'.
+      Type '{}' is missing the following properties from type 'Blob': size, type, arrayBuffer, bytes, and 3 more.
+src/components/PagesBannersTab.tsx(319,11): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | null'.
+  Type 'undefined' is not assignable to type 'string | null'.
+src/components/PagesBannersTab.tsx(330,11): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | null'.
+  Type 'undefined' is not assignable to type 'string | null'.
+src/components/PagesBannersTab.tsx(341,11): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | null'.
+  Type 'undefined' is not assignable to type 'string | null'.
+src/components/PagesBannersTab.tsx(352,11): error TS2345: Argument of type 'string | null | undefined' is not assignable to parameter of type 'string | null'.
+  Type 'undefined' is not assignable to type 'string | null'.

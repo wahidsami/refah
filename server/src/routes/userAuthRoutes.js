@@ -1,14 +1,49 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const userAuthController = require('../controllers/userAuthController');
 const { authenticateUser } = require('../middleware/authUser');
 
+// Configure multer for avatar uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = path.join(__dirname, '../../uploads/avatars');
+        // Create directory if it doesn't exist
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|webp/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+
+        if (extname && mimetype) {
+            return cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed (jpeg, jpg, png, webp)'));
+        }
+    }
+});
+
 /**
  * @route   POST /api/v1/auth/user/register
- * @desc    Register a new platform user
+ * @desc    Register a new platform user with optional avatar
  * @access  Public
  */
-router.post('/register', userAuthController.register);
+router.post('/register', upload.single('avatar'), userAuthController.register);
 
 /**
  * @route   POST /api/v1/auth/user/login
@@ -30,6 +65,13 @@ router.post('/refresh-token', userAuthController.refreshToken);
  * @access  Private
  */
 router.post('/logout', authenticateUser, userAuthController.logout);
+
+/**
+ * @route   POST /api/v1/auth/user/register-fcm
+ * @desc    Register FCM token for push notifications
+ * @access  Private
+ */
+router.post('/register-fcm', authenticateUser, userAuthController.registerFcmToken);
 
 /**
  * @route   GET /api/v1/auth/user/verify-email/:token

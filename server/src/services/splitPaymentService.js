@@ -13,8 +13,7 @@ const paymentService = require('./paymentService');
  * @returns {Promise<Object>} { depositAmount, remainderAmount, depositPercentage }
  */
 const calculateSplitPayment = async (tenantId, totalPrice) => {
-    // TODO: Get deposit percentage from tenant settings
-    // For now, use default 25%
+    // Default 25% deposit; tenant-specific percentage can be added via TenantSettings when needed
     const depositPercentage = 25;
 
     const price = parseFloat(totalPrice);
@@ -50,7 +49,7 @@ const recordRemainderPayment = async (appointmentId, paymentData) => {
         throw new Error('Remainder already paid');
     }
 
-    // Record transaction
+    // Record payment transaction (for tenant payment history)
     await db.PaymentTransaction.create({
         appointmentId,
         type: 'remainder',
@@ -60,6 +59,32 @@ const recordRemainderPayment = async (appointmentId, paymentData) => {
         processedBy,
         processedAt: new Date(),
         notes
+    });
+
+    // Record in transactions for admin financial dashboard (commission on remainder)
+    const totalPrice = parseFloat(appointment.price || 0);
+    const platformFeeTotal = parseFloat(appointment.platformFee || 0);
+    const remainderAmount = parseFloat(amount);
+    const platformFeeRemainder = totalPrice > 0
+        ? parseFloat((remainderAmount * (platformFeeTotal / totalPrice)).toFixed(2))
+        : 0;
+    const tenantRevenueRemainder = parseFloat((remainderAmount - platformFeeRemainder).toFixed(2));
+
+    await db.Transaction.create({
+        platformUserId: appointment.platformUserId,
+        tenantId: appointment.tenantId,
+        appointmentId: appointment.id,
+        amount: remainderAmount,
+        currency: 'SAR',
+        type: 'booking',
+        status: 'completed',
+        platformFee: platformFeeRemainder,
+        tenantRevenue: tenantRevenueRemainder,
+        metadata: {
+            source: 'remainder_payment',
+            paymentMethod: paymentMethod || 'unknown',
+            processedBy: processedBy || null
+        }
     });
 
     // Update appointment

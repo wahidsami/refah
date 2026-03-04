@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ChevronLeft, Calendar, Clock, Home, User, CreditCard, CheckCircle } from 'lucide-react';
 import { BookingData } from '../types';
-import { publicAPI, Service, Staff } from '../lib/api';
+import { getImageUrl, publicAPI, Service, Staff } from '../lib/api';
 import { useTenant } from '../context/TenantContext';
 import { useAuth } from '../context/AuthContext';
 import { Currency } from './Currency';
@@ -418,7 +418,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, ini
                 </button>
                 {staff.map((member) => {
                   const imageUrl = member.image 
-                    ? (member.image.startsWith('http') ? member.image : `http://localhost:5000/uploads/${member.image}`)
+                    ? (member.image.startsWith('http') ? member.image : getImageUrl(member.image))
                     : 'https://via.placeholder.com/150';
                   return (
                     <button

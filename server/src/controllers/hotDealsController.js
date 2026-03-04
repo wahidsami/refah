@@ -5,7 +5,43 @@
 
 const db = require('../models');
 const promotionService = require('../services/promotionService');
+const { getActiveSubscriptionForTenant } = require('../services/tenantSubscriptionService');
 const { Op } = require('sequelize');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for hot deal image uploads
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = 'uploads/hot-deals';
+        // Create directory if it doesn't exist
+        fs.mkdirSync(uploadDir, { recursive: true });
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        // Generate unique filename with original extension
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'deal-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+// File filter for images only
+const fileFilter = (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only image files are allowed!'), false);
+    }
+};
+
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB limit
+    }
+});
 
 /**
  * Get hot deals limits for current tenant
@@ -14,22 +50,11 @@ const { Op } = require('sequelize');
 const getHotDealsLimits = async (req, res) => {
     try {
         const tenantId = req.tenantId;
-
-        // Get tenant's subscription
-        const tenant = await db.Tenant.findByPk(tenantId, {
-            include: [{
-                model: db.TenantSubscription,
-                as: 'subscription',
-                where: { status: 'active' },
-                required: false,
-                include: [{
-                    model: db.SubscriptionPackage,
-                    as: 'package'
-                }]
-            }]
+        const result = await getActiveSubscriptionForTenant(tenantId, {
+            statuses: ['active', 'trial', 'APPROVED_FREE_ACTIVE']
         });
 
-        if (!tenant || !tenant.subscription) {
+        if (!result) {
             return res.json({
                 success: true,
                 canCreate: false,
@@ -42,15 +67,14 @@ const getHotDealsLimits = async (req, res) => {
             });
         }
 
-        const packageLimits = tenant.subscription.package?.limits || {};
+        const packageLimits = result.package?.limits || {};
         const maxHotDeals = packageLimits.maxHotDeals || 0;
-        const autoApprove = packageLimits.autoApproveHotDeals || false;
+        const autoApprove = packageLimits.hotDealsAutoApprove ?? packageLimits.autoApproveHotDeals ?? false;
 
-        // Count current active/pending deals
         const currentCount = await db.HotDeal.count({
             where: {
                 tenantId,
-                status: { [Op.in]: ['pending', 'active'] }
+                status: { [Op.in]: ['active', 'approved'] }
             }
         });
 
@@ -60,7 +84,7 @@ const getHotDealsLimits = async (req, res) => {
             success: true,
             canCreate,
             limits: {
-                packageName: tenant.subscription.package?.name || 'Unknown',
+                packageName: result.package?.name || 'Unknown',
                 maxHotDeals,
                 autoApprove,
                 currentCount
@@ -112,7 +136,7 @@ const getTenantHotDeals = async (req, res) => {
  */
 const createHotDeal = async (req, res) => {
     try {
-        const tenantId = req.user.tenantId;
+        const tenantId = req.tenantId;
         const {
             serviceId,
             title_en,
@@ -130,6 +154,10 @@ const createHotDeal = async (req, res) => {
         const canCreate = await promotionService.canCreateHotDeal(tenantId);
 
         if (!canCreate.allowed) {
+            // Delete uploaded file if deal creation fails
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(403).json({
                 success: false,
                 message: canCreate.reason
@@ -139,6 +167,9 @@ const createHotDeal = async (req, res) => {
         // Get service to calculate prices
         const service = await db.Service.findByPk(serviceId);
         if (!service) {
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(404).json({
                 success: false,
                 message: 'Service not found'
@@ -146,14 +177,17 @@ const createHotDeal = async (req, res) => {
         }
 
         if (service.tenantId !== tenantId) {
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(403).json({
                 success: false,
                 message: 'You can only create deals for your own services'
             });
         }
 
-        // Calculate discounted price
-        const originalPrice = parseFloat(service.price);
+        // Calculate discounted price (Service has finalPrice/rawPrice/basePrice, no .price)
+        const originalPrice = parseFloat(service.finalPrice ?? service.rawPrice ?? service.basePrice ?? 0);
         let discountedPrice;
 
         if (discountType === 'percentage') {
@@ -165,6 +199,9 @@ const createHotDeal = async (req, res) => {
 
         // Validate discount (max 50%)
         if (discountedPrice < originalPrice * 0.5) {
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(400).json({
                 success: false,
                 message: 'Maximum discount is 50%'
@@ -173,14 +210,18 @@ const createHotDeal = async (req, res) => {
 
         // Validate dates
         if (new Date(validUntil) <= new Date(validFrom)) {
+            if (req.file) {
+                fs.unlinkSync(req.file.path);
+            }
             return res.status(400).json({
                 success: false,
                 message: 'Valid until must be after valid from'
             });
         }
 
-        // Create hot deal
-        const status = canCreate.autoApprove ? 'approved' : 'pending';
+        // Create hot deal (auto-approved deals go live as 'active' so they appear in public API)
+        const status = canCreate.autoApprove ? 'active' : 'pending';
+        const imagePath = req.file ? `hot-deals/${req.file.filename}` : null;
 
         const deal = await db.HotDeal.create({
             tenantId,
@@ -197,7 +238,8 @@ const createHotDeal = async (req, res) => {
             validUntil,
             maxRedemptions,
             status,
-            isActive: true
+            isActive: true,
+            image: imagePath
         });
 
         res.status(201).json({
@@ -207,6 +249,10 @@ const createHotDeal = async (req, res) => {
         });
     } catch (error) {
         console.error('Create hot deal error:', error);
+        // Delete uploaded file if error occurs
+        if (req.file) {
+            try { fs.unlinkSync(req.file.path); } catch (e) { console.error('Error deleting file:', e); }
+        }
         res.status(500).json({
             success: false,
             message: error.message || 'Failed to create hot deal'
@@ -221,7 +267,7 @@ const createHotDeal = async (req, res) => {
 const updateHotDeal = async (req, res) => {
     try {
         const { id } = req.params;
-        const tenantId = req.user.tenantId;
+        const tenantId = req.tenantId;
         const updates = req.body;
 
         const deal = await db.HotDeal.findByPk(id);
@@ -269,7 +315,7 @@ const updateHotDeal = async (req, res) => {
 const deleteHotDeal = async (req, res) => {
     try {
         const { id } = req.params;
-        const tenantId = req.user.tenantId;
+        const tenantId = req.tenantId;
 
         const deal = await db.HotDeal.findByPk(id);
         if (!deal) {
@@ -317,12 +363,12 @@ const getPendingHotDeals = async (req, res) => {
                 {
                     model: db.Tenant,
                     as: 'tenant',
-                    attributes: ['id', 'businessNameEn', 'businessNameAr']
+                    attributes: ['id', 'name_en', 'name_ar']
                 },
                 {
                     model: db.Service,
                     as: 'service',
-                    attributes: ['id', 'name', 'name_ar', 'price']
+                    attributes: ['id', 'name_en', 'name_ar', 'finalPrice', 'rawPrice', 'basePrice']
                 }
             ],
             order: [['createdAt', 'ASC']]
@@ -449,12 +495,12 @@ const getActiveHotDeals = async (req, res) => {
                 {
                     model: db.Tenant,
                     as: 'tenant',
-                    attributes: ['id', 'businessNameEn', 'businessNameAr', 'logo', 'slug']
+                    attributes: ['id', 'name_en', 'name_ar', 'logo', 'slug']
                 },
                 {
                     model: db.Service,
                     as: 'service',
-                    attributes: ['id', 'name', 'name_ar', 'duration']
+                    attributes: ['id', 'name_en', 'name_ar', 'duration']
                 }
             ],
             order: [['createdAt', 'DESC']],
@@ -475,6 +521,9 @@ const getActiveHotDeals = async (req, res) => {
 };
 
 module.exports = {
+    // Middleware
+    upload,
+
     // Tenant endpoints
     getHotDealsLimits,
     getTenantHotDeals,

@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { api } from "@/lib/api";
+import { api, getImageUrl } from "@/lib/api";
 import { Currency } from "@/components/Currency";
 import Link from "next/link";
 
@@ -224,7 +224,7 @@ function OrderDetailsContent({ params }: { params: { id: string } }) {
                                 <div key={item.id} className={`flex items-center gap-4 p-4 bg-gray-50 rounded-lg ${isRTL ? 'flex-row-reverse' : ''}`}>
                                     {item.productImage && (
                                         <img
-                                            src={`http://localhost:5000${item.productImage.startsWith('/') ? item.productImage : `/uploads/${item.productImage}`}`}
+                                            src={getImageUrl(item.productImage)}
                                             alt={item.productName}
                                             className="w-20 h-20 rounded-lg object-cover"
                                         />

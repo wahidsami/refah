@@ -4,7 +4,7 @@ import { Filter } from 'lucide-react';
 import { ProductCard } from './ProductCard';
 import { useCart } from '../context/CartContext';
 import { useTenant } from '../context/TenantContext';
-import { publicAPI, Product } from '../lib/api';
+import { getImageUrl, publicAPI, Product } from '../lib/api';
 
 interface ProductsListingPageProps {
   onProductClick?: (productId: string) => void;
@@ -21,9 +21,7 @@ export const ProductsListingPage: React.FC<ProductsListingPageProps> = () => {
 
   // Get banner from pageBanners field (dedicated column)
   const productsBanner = pageData?.pageBanners?.products;
-  const bannerImage = productsBanner
-    ? `http://localhost:5000${productsBanner.startsWith('/uploads/') ? productsBanner : `/uploads/${productsBanner}`}`
-    : null;
+  const bannerImage = productsBanner ? getImageUrl(productsBanner) : null;
 
   useEffect(() => {
     const loadProducts = async () => {

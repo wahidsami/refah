@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { BRANDING } from "@/config/branding";
+import { getImageUrl } from "@/lib/api";
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -25,8 +26,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: t("nav.bookings"), href: "/dashboard/bookings", icon: "📅" },
         { name: t("nav.purchases"), href: "/dashboard/purchases", icon: "🛍️" },
         { name: t("nav.payments"), href: "/dashboard/payments", icon: "💳" },
-        { name: t("nav.paymentMethods"), href: "/dashboard/payment-methods", icon: "💳" },
-        { name: t("nav.wallet"), href: "/dashboard/wallet", icon: "💰" },
+        { name: t("nav.paymentMethods") || "Payment Methods", href: "/dashboard/payment-methods", icon: "💳" },
+        { name: "Staff", href: "/dashboard/staff", icon: "👩‍💼" },
+        { name: "Analytics", href: "/dashboard/analytics", icon: "📈" },
+        { name: "Reports", href: "/dashboard/reports", icon: "📄" },
+        { name: t("nav.wallet") || "Wallet", href: "/dashboard/wallet", icon: "💰" },
+        { name: "Messages", href: "/dashboard/messages", icon: "📨" },
+        { name: "Payroll", href: "/dashboard/payroll", icon: "💸" },
+        { name: "Reviews", href: "/dashboard/reviews", icon: "⭐" },
         { name: t("nav.settings"), href: "/dashboard/settings", icon: "⚙️" },
     ];
 
@@ -41,7 +48,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5">
             {/* Mobile Header */}
             <header className="lg:hidden bg-white/80 backdrop-blur-lg border-b border-gray-200 sticky top-0 z-50">
-                <div 
+                <div
                     className="px-4 py-4 flex items-center justify-between"
                     style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                 >
@@ -83,7 +90,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                             </p>
                         </div>
                     </div>
-                    <div 
+                    <div
                         className="flex items-center gap-2"
                         style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                     >
@@ -108,11 +115,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                                         key={item.name}
                                         href={item.href}
                                         onClick={() => setMobileMenuOpen(false)}
-                                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                                            active
-                                                ? "bg-primary text-white"
-                                                : "text-gray-700 hover:bg-gray-100"
-                                        }`}
+                                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${active
+                                            ? "bg-primary text-white"
+                                            : "text-gray-700 hover:bg-gray-100"
+                                            }`}
                                         style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                                     >
                                         <span className="text-xl">{item.icon}</span>
@@ -151,7 +157,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 {/* Sidebar */}
                 <aside className={`hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 lg:bg-white/80 lg:backdrop-blur-lg ${isRTL ? 'lg:right-0 lg:border-l lg:border-gray-200' : 'lg:left-0 lg:border-r lg:border-gray-200'}`}>
                     {/* Sidebar Header */}
-                    <div 
+                    <div
                         className="flex items-center gap-3 px-6 py-6 border-b border-gray-200"
                         style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                     >
@@ -178,13 +184,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
                     {/* User Info */}
                     <div className="px-6 py-4 border-b border-gray-200">
-                        <div 
+                        <div
                             className="flex items-center gap-3"
                             style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                         >
                             {user?.profileImage ? (
                                 <img
-                                    src={`http://localhost:5000${user.profileImage}`}
+                                    src={user.profileImage ? getImageUrl(user.profileImage) : ''}
                                     alt="Profile"
                                     className="w-10 h-10 rounded-full object-cover"
                                     onError={(e) => {
@@ -216,11 +222,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                                 <Link
                                     key={item.name}
                                     href={item.href}
-                                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                                        active
-                                            ? "bg-primary text-white"
-                                            : "text-gray-700 hover:bg-gray-100"
-                                    }`}
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${active
+                                        ? "bg-primary text-white"
+                                        : "text-gray-700 hover:bg-gray-100"
+                                        }`}
                                     style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}
                                 >
                                     <span className="text-xl">{item.icon}</span>

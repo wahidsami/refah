@@ -132,6 +132,12 @@ module.exports = (sequelize, DataTypes) => {
             field: 'address_notes', // Database column is snake_case
             comment: 'Additional delivery notes'
         },
+        addressDistrict: {
+            type: DataTypes.STRING(100),
+            allowNull: true,
+            field: 'address_district',
+            comment: 'District/area for saved address'
+        },
 
         // Preferences
         preferredLanguage: {
@@ -179,6 +185,12 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING,
             allowNull: true
         },
+        passwordResetExpires: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            field: 'password_reset_expires',
+            comment: 'Expiry for password reset token (customer app)'
+        },
         phoneVerificationCode: {
             type: DataTypes.STRING,
             allowNull: true
@@ -192,6 +204,12 @@ module.exports = (sequelize, DataTypes) => {
         refreshToken: {
             type: DataTypes.TEXT,
             allowNull: true
+        },
+        fcm_token: {
+            type: DataTypes.STRING,
+            allowNull: true,
+            field: 'fcm_token',
+            comment: 'FCM token for push notifications (customer app)'
         },
 
         // Status

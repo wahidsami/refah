@@ -54,7 +54,8 @@ Write-Info "Checking Node.js..."
 try {
     $nodeVersion = node --version
     Write-Success "Node.js found: $nodeVersion"
-} catch {
+}
+catch {
     Write-Error "Node.js is not installed or not in PATH"
     Write-Info "Please install Node.js from https://nodejs.org/"
     exit 1
@@ -65,7 +66,8 @@ Write-Info "Checking npm..."
 try {
     $npmVersion = npm --version
     Write-Success "npm found: $npmVersion"
-} catch {
+}
+catch {
     Write-Error "npm is not installed or not in PATH"
     exit 1
 }
@@ -76,13 +78,15 @@ if (-not $SkipDocker) {
     try {
         docker ps | Out-Null
         Write-Success "Docker is running"
-    } catch {
+    }
+    catch {
         Write-Error "Docker is not running"
         Write-Warning "Please start Docker Desktop and run this script again"
         Write-Info "Or use -SkipDocker flag if Docker is not needed"
         exit 1
     }
-} else {
+}
+else {
     Write-Warning "Skipping Docker check (using -SkipDocker flag)"
 }
 
@@ -97,7 +101,8 @@ if (-not $SkipDocker) {
     
     if ($postgresRunning -and $redisRunning) {
         Write-Success "Docker containers are already running"
-    } else {
+    }
+    else {
         Write-Info "Starting Docker containers..."
         docker-compose up -d
         
@@ -115,12 +120,14 @@ if (-not $SkipDocker) {
         
         if ($postgresRunning -and $redisRunning) {
             Write-Success "Docker containers started successfully"
-        } else {
+        }
+        else {
             Write-Error "Docker containers failed to start"
             exit 1
         }
     }
-} else {
+}
+else {
     Write-Section "STEP 2: Skipping Docker (using -SkipDocker flag)"
 }
 
@@ -151,13 +158,16 @@ if (-not $SkipDeps) {
                     return $false
                 }
                 Write-Success "$Name dependencies installed"
-            } catch {
+            }
+            catch {
                 Write-Error "Error installing $Name dependencies: $_"
                 return $false
-            } finally {
+            }
+            finally {
                 Pop-Location
             }
-        } else {
+        }
+        else {
             Write-Success "$Name dependencies already installed"
         }
         return $true
@@ -184,7 +194,8 @@ if (-not $SkipDeps) {
     }
     
     Write-Success "All dependencies are ready"
-} else {
+}
+else {
     Write-Section "STEP 3: Skipping Dependency Check (using -SkipDeps flag)"
 }
 
@@ -200,7 +211,8 @@ function Test-Port {
     if ($connection) {
         Write-Warning "Port $Port is already in use (may be $Service already running)"
         return $false
-    } else {
+    }
+    else {
         Write-Success "Port $Port is available"
         return $true
     }
@@ -255,7 +267,17 @@ Write-Host '  $title' -ForegroundColor $Color
 Write-Host '═══════════════════════════════════════════════════════════════════' -ForegroundColor $Color
 Write-Host ''
 cd '$fullPath'
+if ('$Name' -eq 'Backend API') {
 npm run dev
+} elseif ('$Name' -eq 'Client App') {
+npm run dev
+} elseif ('$Name' -eq 'Public Page') {
+npm run dev -- --port $Port
+} elseif ('$Name' -eq 'Admin Dashboard' -or '$Name' -eq 'Tenant Dashboard') {
+npm run dev -- -p $Port
+} else {
+npm run dev
+}
 "@
     
     try {
@@ -263,7 +285,8 @@ npm run dev
         Start-Sleep -Seconds 2
         Write-Success "$Name started in new window"
         return $true
-    } catch {
+    }
+    catch {
         Write-Error "Failed to start $Name : $_"
         return $false
     }
@@ -304,7 +327,8 @@ if ($HealthCheck) {
                 Write-Success "$Name is responding"
                 return $true
             }
-        } catch {
+        }
+        catch {
             Write-Warning "$Name is not responding yet (may need more time)"
             return $false
         }

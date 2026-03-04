@@ -208,6 +208,8 @@ class OrderService {
                 throw new Error('Order not found');
             }
 
+            const wasPaid = order.paymentStatus === 'paid';
+
             // Update payment status
             await order.update({
                 paymentStatus,
@@ -217,6 +219,31 @@ class OrderService {
             // If payment confirmed and order was pending, update status
             if (paymentStatus === 'paid' && order.status === 'pending') {
                 await order.update({ status: 'confirmed' }, { transaction });
+            }
+
+            // Record in transactions for admin financial dashboard (POD/POV - tenant marked as paid)
+            if (paymentStatus === 'paid' && !wasPaid) {
+                const existingTx = await db.Transaction.findOne({
+                    where: { orderId: order.id, type: 'product_purchase', status: 'completed' },
+                    transaction
+                });
+                if (!existingTx) {
+                    const platformFee = parseFloat(order.platformFee || 0);
+                    const totalAmount = parseFloat(order.totalAmount || 0);
+                    const tenantRevenue = parseFloat((totalAmount - platformFee).toFixed(2));
+                    await db.Transaction.create({
+                        platformUserId: order.platformUserId,
+                        tenantId: order.tenantId,
+                        orderId: order.id,
+                        amount: totalAmount,
+                        currency: 'SAR',
+                        type: 'product_purchase',
+                        status: 'completed',
+                        platformFee,
+                        tenantRevenue,
+                        metadata: { source: 'tenant_marked_paid', paymentMethod: order.paymentMethod || 'unknown' }
+                    }, { transaction });
+                }
             }
 
             if (shouldCommit) {

@@ -5,7 +5,10 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
-const API_BASE_URL = 'http://localhost:5000/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/public\/?$/, '') 
+  ? `${process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/v1\/public\/?$/, '')}/api/v1`
+  : 'http://localhost:5000/api/v1';
+const CLIENT_URL = process.env.NEXT_PUBLIC_CLIENT_URL || 'http://localhost:3000';
 
 export interface User {
   id: string;
@@ -188,7 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!options?.skipRedirect) {
           // For PublicPage, we might want to redirect to client app dashboard
           // But for now, we'll stay on the page
-          window.location.href = 'http://localhost:3000/dashboard';
+          window.location.href = `${CLIENT_URL}/dashboard`;
         }
       } else {
         throw new Error('Login failed');
@@ -230,7 +233,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             sessionStorage.removeItem('rifah_return_after_register');
             window.location.href = returnUrl;
           } else {
-            window.location.href = 'http://localhost:3000/dashboard';
+            window.location.href = `${CLIENT_URL}/dashboard`;
           }
         }
       } else {

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Filter } from 'lucide-react';
 import { ServiceCard } from './ServiceCard';
 import { useTenant } from '../context/TenantContext';
-import { publicAPI, Service } from '../lib/api';
+import { getImageUrl, publicAPI, Service } from '../lib/api';
 
 interface ServicesPageProps {
   onServiceClick: (serviceId: string) => void;
@@ -20,9 +20,7 @@ export const ServicesPage: React.FC<ServicesPageProps> = ({ onServiceClick }) =>
 
   // Get banner from pageBanners field (dedicated column)
   const servicesBanner = pageData?.pageBanners?.services;
-  const bannerImage = servicesBanner
-    ? `http://localhost:5000${servicesBanner.startsWith('/uploads/') ? servicesBanner : `/uploads/${servicesBanner}`}`
-    : null;
+  const bannerImage = servicesBanner ? getImageUrl(servicesBanner) : null;
 
   useEffect(() => {
     const loadServices = async () => {

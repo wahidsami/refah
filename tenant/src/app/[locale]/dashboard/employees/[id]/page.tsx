@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { TenantLayout } from "@/components/TenantLayout";
-import { tenantApi } from "@/lib/api";
+import { getImageUrl, tenantApi } from "@/lib/api";
 import { useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
 import { Currency } from "@/components/Currency";
 import Link from "next/link";
 
 const NATIONALITIES = [
-  "Saudi", "Egyptian", "Filipino", "Indian", "Pakistani", 
+  "Saudi", "Egyptian", "Filipino", "Indian", "Pakistani",
   "Bangladeshi", "Syrian", "Jordanian", "Lebanese", "Yemeni",
   "Sudanese", "Tunisian", "Moroccan", "Other"
 ];
@@ -28,6 +28,7 @@ interface Employee {
   commissionRate: number;
   // workingHours removed - use Schedules section instead
   isActive: boolean;
+  app_enabled?: boolean;
 }
 
 export default function EditEmployeePage() {
@@ -58,6 +59,21 @@ export default function EditEmployeePage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [existingPhoto, setExistingPhoto] = useState<string | null>(null);
 
+  // App Access State
+  const [appEnabled, setAppEnabled] = useState(false);
+  const [appAccessLoading, setAppAccessLoading] = useState(false);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  // Permissions State
+  const [permissions, setPermissions] = useState({
+    view_earnings: false,
+    view_reviews: true,
+    reply_reviews: false,
+    view_clients: false
+  });
+  const [permissionsLoading, setPermissionsLoading] = useState(false);
+
   useEffect(() => {
     if (id) {
       loadEmployee();
@@ -68,9 +84,9 @@ export default function EditEmployeePage() {
     try {
       setLoading(true);
       setError("");
-      
+
       const response = await tenantApi.getEmployee(id as string);
-      
+
       if (response.success && response.employee) {
         const emp = response.employee;
         setFormData({
@@ -86,10 +102,27 @@ export default function EditEmployeePage() {
           isActive: emp.isActive !== undefined ? emp.isActive : true
           // Note: workingHours removed - use Schedules section to manage employee schedules
         });
-        
+
+        setAppEnabled(emp.app_enabled || false);
+
         if (emp.photo) {
-          setExistingPhoto(`http://localhost:5000/uploads/${emp.photo}`);
-          setPhotoPreview(`http://localhost:5000/uploads/${emp.photo}`);
+          setExistingPhoto(getImageUrl(emp.photo));
+          setPhotoPreview(getImageUrl(emp.photo));
+        }
+
+        // Load Permissions
+        try {
+          const permRes = await tenantApi.getEmployeePermissions(id as string);
+          if (permRes.success && permRes.permissions) {
+            setPermissions({
+              view_earnings: permRes.permissions.view_earnings || false,
+              view_reviews: permRes.permissions.view_reviews !== undefined ? permRes.permissions.view_reviews : true,
+              reply_reviews: permRes.permissions.reply_reviews || false,
+              view_clients: permRes.permissions.view_clients || false
+            });
+          }
+        } catch (permErr) {
+          console.error("Failed to load permissions:", permErr);
         }
       } else {
         setError(response.message || "Failed to load employee");
@@ -142,6 +175,76 @@ export default function EditEmployeePage() {
     }
   };
 
+  const handleToggleAppAccess = async () => {
+    setAppAccessLoading(true);
+    try {
+      const response = await tenantApi.updateEmployeeAppAccess(id as string, !appEnabled);
+      if (response.success) {
+        setAppEnabled(!appEnabled);
+      } else {
+        setError(response.message || "Failed to update app access");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to update app access");
+    } finally {
+      setAppAccessLoading(false);
+    }
+  };
+
+  const handleSendInvite = async () => {
+    if (!formData.email) {
+      setError(locale === 'ar' ? 'الرجاء إضافة بريد إلكتروني للموظف لإرسال الدعوة' : 'Please add an email address for the employee to send an invite');
+      return;
+    }
+    setInviteLoading(true);
+    try {
+      const response = await tenantApi.sendEmployeeAppInvite(id as string);
+      if (response.success) {
+        alert(locale === 'ar' ? "تم إرسال الدعوة وتفعيل وصول التطبيق بنجاح." : "Invite sent successfully. App access has been enabled for this staff member.");
+        setAppEnabled(true);
+      } else {
+        setError(response.message || "Failed to send invite");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to send invite");
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!confirm(locale === 'ar' ? 'هل أنت متأكد من إعادة تعيين كلمة المرور لهذا الموظف؟' : 'Are you sure you want to reset password for this employee?')) return;
+    setResetLoading(true);
+    try {
+      const response = await tenantApi.resetEmployeePassword(id as string);
+      if (response.success) {
+        alert(locale === 'ar' ? "تم إرسال رابط إعادة تعيين كلمة المرور." : "Password reset link sent successfully.");
+      } else {
+        setError(response.message || "Failed to reset password");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to reset password");
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handlePermissionChange = async (key: keyof typeof permissions, checked: boolean) => {
+    // Optimistic UI update
+    setPermissions(prev => ({ ...prev, [key]: checked }));
+    setPermissionsLoading(true);
+    try {
+      await tenantApi.updateEmployeePermissions(id as string, { [key]: checked });
+    } catch (err: any) {
+      console.error("Failed to update permission:", err);
+      setError(locale === 'ar' ? 'فشل تحديث الصلاحيات' : 'Failed to update permissions');
+      // Revert optimism
+      setPermissions(prev => ({ ...prev, [key]: !checked }));
+    } finally {
+      setPermissionsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -149,7 +252,7 @@ export default function EditEmployeePage() {
 
     try {
       const submitData = new FormData();
-      
+
       // Append all form fields
       submitData.append("name", formData.name);
       if (formData.email) submitData.append("email", formData.email);
@@ -162,14 +265,14 @@ export default function EditEmployeePage() {
       submitData.append("commissionRate", formData.commissionRate || "0");
       submitData.append("isActive", formData.isActive.toString());
       // Note: workingHours removed - use Schedules section to manage employee schedules
-      
+
       // Append photo only if a new one is selected
       if (photoFile) {
         submitData.append("photo", photoFile);
       }
 
       const response = await tenantApi.updateEmployee(id as string, submitData);
-      
+
       if (response.success) {
         router.push(`/${locale}/dashboard/employees`);
       } else {
@@ -230,7 +333,7 @@ export default function EditEmployeePage() {
               <h3 className="text-xl font-semibold text-gray-900 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
                 {locale === 'ar' ? 'المعلومات الأساسية' : 'Basic Information'}
               </h3>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2" style={{ textAlign: isRTL ? 'right' : 'left' }}>
@@ -331,7 +434,7 @@ export default function EditEmployeePage() {
               <h3 className="text-xl font-semibold text-gray-900 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
                 {t("skills")}
               </h3>
-              
+
               <div className="space-y-4">
                 <div className="flex gap-2" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
                   <input
@@ -385,7 +488,7 @@ export default function EditEmployeePage() {
               <h3 className="text-xl font-semibold text-gray-900 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
                 {t("photo")}
               </h3>
-              
+
               <div className="space-y-4">
                 {photoPreview ? (
                   <div className="relative">
@@ -410,7 +513,7 @@ export default function EditEmployeePage() {
                     <span className="text-6xl">📷</span>
                   </div>
                 )}
-                
+
                 <label className="block">
                   <input
                     type="file"
@@ -430,7 +533,7 @@ export default function EditEmployeePage() {
               <h3 className="text-xl font-semibold text-gray-900 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
                 {locale === 'ar' ? 'المعلومات المالية' : 'Financial Information'}
               </h3>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2" style={{ textAlign: isRTL ? 'right' : 'left' }}>
@@ -477,11 +580,140 @@ export default function EditEmployeePage() {
                   name="isActive"
                   checked={formData.isActive}
                   onChange={handleChange}
-                  className="w-4 h-4 text-primary focus:ring-primary"
+                  className="w-4 h-4 text-primary focus:ring-primary rounded"
                 />
                 <label className="font-medium text-gray-700">{t("isActive")}</label>
               </div>
             </div>
+
+            {/* App Access Management */}
+            <div className="card">
+              <h3 className="text-xl font-semibold text-gray-900 mb-4" style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                {locale === 'ar' ? 'وصول التطبيق' : 'App Access'}
+              </h3>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
+                  <div style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                    <p className="font-medium text-gray-800">{locale === 'ar' ? 'تفعيل الوصول للتطبيق' : 'Enable Mobile App Access'}</p>
+                    <p className="text-sm text-gray-500">{locale === 'ar' ? 'السماح للموظف باستخدام تطبيق RifahStaff' : 'Allow staff to use the RifahStaff mobile app'}</p>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handleToggleAppAccess}
+                      disabled={appAccessLoading}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${appEnabled ? 'bg-primary' : 'bg-gray-200'} ${appAccessLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${appEnabled ? (isRTL ? '-translate-x-5' : 'translate-x-5') : 'translate-x-0'}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <hr className="border-gray-100" />
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSendInvite}
+                    disabled={inviteLoading || !formData.email}
+                    className="w-full px-4 py-2 border border-primary text-primary rounded-lg hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                  >
+                    {inviteLoading ? (
+                      <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                    ) : (
+                      locale === 'ar' ? 'إرسال دعوة التطبيق (بريد إلكتروني)' : 'Send App Invite (Email)'
+                    )}
+                  </button>
+
+                  {appEnabled && (
+                    <button
+                      type="button"
+                      onClick={handleResetPassword}
+                      disabled={resetLoading || !formData.email}
+                      className="w-full px-4 py-2 border border-red-500 text-red-500 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                    >
+                      {resetLoading ? (
+                        <div className="w-5 h-5 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        locale === 'ar' ? 'طلب إعادة تعيين كلمة المرور' : 'Request Password Reset'
+                      )}
+                    </button>
+                  )}
+
+                  {!formData.email && (
+                    <p className="text-xs text-red-500 mt-1" style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                      {locale === 'ar' ? 'البريد الإلكتروني مطلوب لإرسال الدعوات.' : 'Email address is required to send invites.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Permissions Matrix */}
+            <div className="card lg:col-span-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-4 flex justify-between items-center" style={{ flexDirection: isRTL ? 'row-reverse' : 'row', textAlign: isRTL ? 'right' : 'left' }}>
+                <span>{locale === 'ar' ? 'صلاحيات الموظف' : 'Staff Permissions'}</span>
+                {permissionsLoading && <span className="text-sm font-normal text-primary animate-pulse">{locale === 'ar' ? 'جاري الحفظ...' : 'Saving...'}</span>}
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 border rounded-lg hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
+                    <div style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                      <p className="font-medium text-gray-800">💰 {locale === 'ar' ? 'عرض الأرباح' : 'View Earnings'}</p>
+                      <p className="text-sm text-gray-500">{locale === 'ar' ? 'تمكين الموظف من رؤية راتبه والعمولات والإكراميات.' : 'Let this staff see their payroll, commission, and tips.'}</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={permissions.view_earnings} onChange={(e) => handlePermissionChange('view_earnings', e.target.checked)} />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
+                    <div style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                      <p className="font-medium text-gray-800">⭐ {locale === 'ar' ? 'عرض التقييمات' : 'View Reviews'}</p>
+                      <p className="text-sm text-gray-500">{locale === 'ar' ? 'السماح برؤية تقييمات العملاء لهذا الموظف.' : 'Let this staff see reviews left by customers.'}</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={permissions.view_reviews} onChange={(e) => handlePermissionChange('view_reviews', e.target.checked)} />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
+                    <div style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                      <p className="font-medium text-gray-800">✍️ {locale === 'ar' ? 'الرد على التقييمات' : 'Reply to Reviews'}</p>
+                      <p className="text-sm text-gray-500">{locale === 'ar' ? 'السماح للرد بشكل عام على تقييمات العملاء.' : 'Let this staff post public replies to reviews.'}</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={permissions.reply_reviews} onChange={(e) => handlePermissionChange('reply_reviews', e.target.checked)} />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="p-4 border rounded-lg hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between" style={{ flexDirection: isRTL ? 'row-reverse' : 'row' }}>
+                    <div style={{ textAlign: isRTL ? 'right' : 'left' }}>
+                      <p className="font-medium text-gray-800">👥 {locale === 'ar' ? 'عرض العملاء الدائمين' : 'View Clients'}</p>
+                      <p className="text-sm text-gray-500">{locale === 'ar' ? 'السماح بمعرفة سجل العملاء.' : 'Let this staff see repeat clients and notes.'}</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" checked={permissions.view_clients} onChange={(e) => handlePermissionChange('view_clients', e.target.checked)} />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
 

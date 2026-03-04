@@ -1,6 +1,6 @@
 import React from 'react';
 import { Star, ShoppingCart, Eye } from 'lucide-react';
-import { Product } from '../lib/api';
+import { Product, getImageUrl } from '../lib/api';
 import { Currency } from './Currency';
 
 interface ProductCardProps {
@@ -23,14 +23,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   // 1. Absolute: /uploads/tenants/products/filename
   // 2. Relative with slash: /tenants/products/filename
   // 3. Relative without slash: tenants/products/filename
-  const productImageRaw = product.images && product.images.length > 0 ? product.images[0] : null;
-  const productImage = productImageRaw 
-    ? `http://localhost:5000${productImageRaw.startsWith('/uploads/') 
-        ? productImageRaw 
-        : productImageRaw.startsWith('/') 
-          ? `/uploads${productImageRaw}` 
-          : `/uploads/${productImageRaw}`}`
-    : null;
+  const productImage = product.images && product.images.length > 0 ? getImageUrl(product.images[0]) : null;
   
   const inStock = product.stock > 0 && product.isAvailable;
 

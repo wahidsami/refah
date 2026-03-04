@@ -3,7 +3,23 @@
  * Handles all API calls to the backend public endpoints
  */
 
-const API_BASE_URL = 'http://localhost:5000/api/v1/public';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1/public';
+
+const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL
+  ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/v1\/public\/?$/, '')
+  : 'http://localhost:5000';
+
+const API_MAIN_BASE = `${API_ORIGIN}/api/v1`;
+
+export function getImageUrl(path: string | null | undefined): string {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  const normalized = path.startsWith('/') ? path.slice(1) : path;
+  const prefix = normalized.startsWith('uploads/') ? '' : 'uploads/';
+  return `${API_ORIGIN}/${prefix}${normalized}`;
+}
+
+export const CLIENT_URL = process.env.NEXT_PUBLIC_CLIENT_URL || 'http://localhost:3000';
 
 export interface WorkingDay {
   open: string;
@@ -151,7 +167,7 @@ class PublicAPI {
     if (!refreshToken) return null;
 
     try {
-      const response = await fetch('http://localhost:5000/api/v1/auth/user/refresh-token', {
+      const response = await fetch(`${API_MAIN_BASE}/auth/user/refresh-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -332,8 +348,7 @@ class PublicAPI {
     };
   }> {
     // Use the booking API endpoint (not public API)
-    const API_BASE_URL = 'http://localhost:5000/api/v1';
-    const response = await fetch(`${API_BASE_URL}/bookings/search`, {
+    const response = await fetch(`${API_MAIN_BASE}/bookings/search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

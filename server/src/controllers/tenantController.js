@@ -148,10 +148,9 @@ const getTenantServices = async (req, res) => {
             });
         }
 
-        // Get services
-        // Note: In full multi-tenant, this would query tenant's schema
+        // Get services for this tenant only
         const services = await db.Service.findAll({
-            where: { isActive: true },
+            where: { tenantId: tenant.id, isActive: true },
             order: [['category', 'ASC'], ['name_en', 'ASC']],
             attributes: [
                 'id',
@@ -163,16 +162,38 @@ const getTenantServices = async (req, res) => {
                 'duration',
                 'basePrice',
                 'minPrice',
-                'maxPrice'
+                'maxPrice',
+                'finalPrice',
+                'image',
+                'hasOffer',
+                'offerDetails',
+                'offerFrom',
+                'offerTo',
+                'hasGift',
+                'giftType',
+                'giftDetails'
             ]
+        });
+
+        const now = new Date();
+        const today = now.toISOString().slice(0, 10); // YYYY-MM-DD for DATEONLY comparison
+        const servicesWithOfferActive = services.map(s => {
+            const json = s.toJSON ? s.toJSON() : s;
+            let offerActive = false;
+            if (json.hasOffer) {
+                const fromOk = !json.offerFrom || json.offerFrom <= today;
+                const toOk = !json.offerTo || json.offerTo >= today;
+                offerActive = fromOk && toOk;
+            }
+            return { ...json, offerActive };
         });
 
         res.json({
             success: true,
             tenantId: tenant.id,
             tenantName: tenant.name,
-            services,
-            count: services.length
+            services: servicesWithOfferActive,
+            count: servicesWithOfferActive.length
         });
 
     } catch (error) {

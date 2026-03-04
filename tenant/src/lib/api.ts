@@ -3,7 +3,22 @@
  * Handles authenticated requests to the backend
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+
+export const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, '') || 'http://localhost:5000';
+
+/** Public page base URL (e.g. http://localhost:3004 or https://public.rifah.sa) */
+export const PUBLIC_PAGE_URL = process.env.NEXT_PUBLIC_PUBLIC_PAGE_URL || 'http://localhost:3004';
+
+export const getImageUrl = (path: string | null | undefined): string => {
+  if (!path) return '/placeholder.png';
+  if (path.startsWith('http')) return path;
+  const normalized = path.replace(/\\/g, '/');
+  const prefix = normalized.startsWith('uploads/') ? '' : 'uploads/';
+  return `${API_ORIGIN}/${prefix}${normalized}`;
+};
+
+const API_URL = API_BASE_URL;
 
 interface ApiResponse<T = any> {
   success: boolean;
@@ -91,10 +106,13 @@ class TenantApiClient {
   ): Promise<T> {
     const accessToken = this.getAccessToken();
 
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...options.headers,
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string>),
     };
+
+    if (!(options.body instanceof FormData)) {
+      headers['Content-Type'] = 'application/json';
+    }
 
     if (accessToken) {
       headers['Authorization'] = `Bearer ${accessToken}`;
@@ -142,6 +160,15 @@ class TenantApiClient {
     const data = await response.json();
 
     if (!response.ok) {
+      // Account suspended: redirect to bills so tenant can pay and restore access
+      if (response.status === 403 && (data as { code?: string }).code === 'ACCOUNT_SUSPENDED' && typeof window !== 'undefined') {
+        const path = window.location.pathname;
+        const locale = path.split('/')[1] || 'en';
+        if (!path.includes('/dashboard/bills')) {
+          window.location.href = `/${locale}/dashboard/bills`;
+          throw new Error(data.message || 'Account suspended. Please pay your bill to restore access.');
+        }
+      }
       throw new Error(data.message || data.error || 'API request failed');
     }
 
@@ -231,6 +258,18 @@ class TenantApiClient {
   /**
    * Dashboard
    */
+  async getBills(): Promise<{ success: boolean; bills: any[] }> {
+    return this.get('/tenant/bills');
+  }
+
+  async getCurrentSubscription(): Promise<{ success: boolean; subscription: any }> {
+    return this.get('/subscription/current');
+  }
+
+  async requestUpgrade(newPackageId: string, billingCycle: string): Promise<{ success: boolean; paymentUrl?: string; billNumber?: string; amount?: number; dueDate?: string }> {
+    return this.post('/subscription/request-upgrade', { newPackageId, billingCycle });
+  }
+
   async getDashboardStats(): Promise<any> {
     return this.get('/tenant/dashboard/stats');
   }
@@ -743,6 +782,10 @@ class TenantApiClient {
     return result;
   }
 
+  async getServiceCategories(): Promise<any> {
+    return this.get('/tenant/services/categories');
+  }
+
   async deleteService(id: string): Promise<any> {
     return this.delete(`/tenant/services/${id}`);
   }
@@ -854,6 +897,32 @@ class TenantApiClient {
     return this.request(`/tenant/appointments/${id}/payment`, {
       method: 'PATCH',
       body: JSON.stringify({ paymentStatus, paymentMethod })
+    });
+  }
+
+  /**
+   * Record remainder payment at center (for deposit_paid appointments).
+   */
+  async recordRemainderPayment(
+    id: string,
+    data: { amount: number; paymentMethod: string; notes?: string }
+  ): Promise<any> {
+    return this.request(`/tenant/appointments/${id}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  /**
+   * Reschedule an appointment (same 24h rule as customer).
+   */
+  async rescheduleAppointment(
+    id: string,
+    data: { startTime: string; staffId?: string }
+  ): Promise<any> {
+    return this.request(`/tenant/appointments/${id}/reschedule`, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
     });
   }
 
@@ -1237,6 +1306,17 @@ class TenantApiClient {
     return this.get(`/tenant/reports/customer-analytics${query ? `?${query}` : ''}`);
   }
 
+  /**
+   * Get full report (multiple sections in one request).
+   */
+  async getFullReport(params: { startDate: string; endDate: string; sections: string[] }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    queryParams.append('startDate', params.startDate);
+    queryParams.append('endDate', params.endDate);
+    queryParams.append('sections', params.sections.join(','));
+    return this.get(`/tenant/reports/full?${queryParams.toString()}`);
+  }
+
   // ==================== Hot Deals Management ====================
 
   /**
@@ -1256,15 +1336,21 @@ class TenantApiClient {
   /**
    * Create a new hot deal
    */
-  async createHotDeal(data: any): Promise<any> {
-    return this.post('/tenant/hot-deals', data);
+  async createHotDeal(data: FormData): Promise<any> {
+    return this.request('/tenant/hot-deals', {
+      method: 'POST',
+      body: data
+    });
   }
 
   /**
    * Update an existing hot deal
    */
-  async updateHotDeal(id: string, data: any): Promise<any> {
-    return this.put(`/tenant/hot-deals/${id}`, data);
+  async updateHotDeal(id: string, data: FormData): Promise<any> {
+    return this.request(`/tenant/hot-deals/${id}`, {
+      method: 'PUT',
+      body: data
+    });
   }
 
   /**
@@ -1279,6 +1365,153 @@ class TenantApiClient {
    */
   async checkHotDealsLimits(): Promise<any> {
     return this.get('/tenant/hot-deals/limits');
+  }
+
+  // --- Subscription ---
+  async getSubscriptionLimits(): Promise<any> {
+    return this.get('/tenant/settings/limits');
+  }
+
+  // --- Messages ---
+  async getMessages(): Promise<any> {
+    return this.get('/tenant/messages');
+  }
+
+  async sendMessage(data: any): Promise<any> {
+    return this.post('/tenant/messages', data);
+  }
+
+  async deleteMessage(id: string): Promise<any> {
+    return this.delete(`/tenant/messages/${id}`);
+  }
+
+  // ==================== AI Content Generation ====================
+  /**
+   * Generate product content using AI
+   */
+  async generateProductAI(data: { name_en?: string; name_ar?: string; brand?: string; category?: string; inputLanguage?: string; mode?: 'search' | 'enhance'; existingData?: Record<string, string> }): Promise<any> {
+    return this.post('/tenant/ai/generate-product', data);
+  }
+
+  /**
+   * Generate service content using AI
+   */
+  async generateServiceAI(data: { name_en?: string; name_ar?: string; category?: string; inputLanguage?: string }): Promise<any> {
+    return this.post('/tenant/ai/generate-service', data);
+  }
+
+  /**
+   * Translate text using AI
+   */
+  async translateTextAI(data: { text: string; targetLanguage: 'English' | 'Arabic' }): Promise<any> {
+    return this.post('/tenant/ai/translate', data);
+  }
+
+  /**
+   * Generate/Enhance About Us content using AI
+   */
+  async generateAboutUsAI(data: { storyText: string; facilitiesText?: string; inputLanguage?: string }): Promise<any> {
+    return this.post('/tenant/ai/generate-about-us', data);
+  }
+
+  // ==================== Employees ====================
+  async getEmployeePermissions(id: string): Promise<any> {
+    return this.get(`/tenant/employees/${id}/permissions`);
+  }
+
+  async updateEmployeePermissions(id: string, data: any): Promise<any> {
+    return this.put(`/tenant/employees/${id}/permissions`, data);
+  }
+
+  async updateEmployeeAppAccess(id: string, hasAppAccess: boolean): Promise<any> {
+    return this.put(`/tenant/employees/${id}/app-access`, { hasAppAccess });
+  }
+
+  async sendEmployeeAppInvite(id: string): Promise<any> {
+    return this.post(`/tenant/employees/${id}/send-invite`, {});
+  }
+
+  async resetEmployeePassword(id: string): Promise<any> {
+    return this.post(`/tenant/employees/${id}/reset-password`, {});
+  }
+
+  // ==================== Payroll ====================
+  async getPayrollRecords(params?: { startDate?: string; endDate?: string; employeeId?: string; status?: string }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    if (params?.startDate) queryParams.append('startDate', params.startDate);
+    if (params?.endDate) queryParams.append('endDate', params.endDate);
+    if (params?.employeeId) queryParams.append('employeeId', params.employeeId);
+    if (params?.status) queryParams.append('status', params.status);
+    const query = queryParams.toString();
+    return this.get(`/tenant/payroll${query ? `?${query}` : ''}`);
+  }
+
+  async generatePayroll(data: any): Promise<any> {
+    return this.post('/tenant/payroll/generate', data);
+  }
+
+  async updatePayrollStatus(id: string, status: string): Promise<any> {
+    return this.put(`/tenant/payroll/${id}/status`, { status });
+  }
+
+  // ==================== Reviews ====================
+  async getReviews(params?: { page?: number; limit?: number; status?: string; serviceId?: string; staffId?: string }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    if (params?.page) queryParams.append('page', params.page.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.serviceId) queryParams.append('serviceId', params.serviceId);
+    if (params?.staffId) queryParams.append('staffId', params.staffId);
+    const query = queryParams.toString();
+    return this.get(`/tenant/reviews${query ? `?${query}` : ''}`);
+  }
+
+  async toggleReviewVisibility(id: string, isVisible: boolean): Promise<any> {
+    return this.patch(`/tenant/reviews/${id}`, { isVisible });
+  }
+
+  /** Reply to a review (public reply, shown in customer app like Google reviews) */
+  async replyToReview(id: string, staffReply: string | null): Promise<any> {
+    return this.patch(`/tenant/reviews/${id}`, { staffReply: staffReply || null });
+  }
+
+  /** Get current month push usage and limit (customer app marketing pushes) */
+  async getPushUsage(): Promise<{ success: boolean; data: { count: number; limit: number; month: string } }> {
+    return this.get('/tenant/notifications/usage');
+  }
+
+  /** Send marketing push to customers. Body: { platformUserIds?, audience?, title, body, linkType?, serviceId? } */
+  async sendMarketingPush(data: {
+    platformUserIds?: string[];
+    audience?: string;
+    title: string;
+    body: string;
+    linkType?: 'none' | 'tenant' | 'service';
+    serviceId?: string;
+  }): Promise<{ success: boolean; message?: string; data?: { sent: number } }> {
+    return this.post('/tenant/notifications/send', data);
+  }
+
+  /** Get push notification send history (paginated) */
+  async getPushHistory(params?: { page?: number; limit?: number }): Promise<{
+    success: boolean;
+    campaigns: Array<{ id: string; title: string; body: string; bodyTruncated: string; data?: any; audienceType: string; recipientCount: number; sentAt: string }>;
+    pagination: { total: number; page: number; limit: number; totalPages: number };
+  }> {
+    const q = new URLSearchParams();
+    if (params?.page != null) q.set('page', String(params.page));
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    return this.get(`/tenant/notifications/history${q.toString() ? `?${q.toString()}` : ''}`);
+  }
+
+  /** Get one campaign detail */
+  async getPushHistoryDetail(id: string): Promise<{ success: boolean; campaign: any }> {
+    return this.get(`/tenant/notifications/history/${id}`);
+  }
+
+  /** Get recipients for a campaign */
+  async getPushHistoryRecipients(id: string): Promise<{ success: boolean; recipients: Array<{ platformUserId: string; email?: string; firstName?: string; lastName?: string }> }> {
+    return this.get(`/tenant/notifications/history/${id}/recipients`);
   }
 }
 

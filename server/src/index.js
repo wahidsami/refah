@@ -9,9 +9,24 @@ const validateEnvironment = require('./middleware/validateEnvironment');
 validateEnvironment();
 
 const db = require('./models');
+const { initRlsSession } = require('./utils/rlsSession');
+const { initSlowQueryLogger } = require('./utils/slowQueryLogger');
+const { startPoolMetricsLogger } = require('./utils/poolMetricsLogger');
+
+initRlsSession(db.sequelize);
+initSlowQueryLogger(db.sequelize);
+let stopPoolMetrics = null;
+if (db.sequelize && db.sequelize.getDialect?.() === 'postgres') {
+    stopPoolMetrics = startPoolMetricsLogger(db.sequelize);
+}
 const redisService = require('./services/redisService');
+const requestId = require('./middleware/requestId');
+const requestLogger = require('./middleware/requestLogger');
+const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
+const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || '10000', 10);
+let server = null;
 
 // ========================================
 // CORS Configuration - Environment-based
@@ -29,18 +44,25 @@ const getCorsOrigins = () => {
         ];
     }
 
-    // Development
-    return [
+    // Development: web UIs + Expo web (RifahMobile/RefahStaff in browser)
+    const devOrigins = [
         'http://localhost:3000',   // Client App
         'http://localhost:3001',   // Legacy
         'http://localhost:3002',   // Admin Dashboard
         'http://localhost:3003',   // Tenant Dashboard
         'http://localhost:3004',   // Public Page
+        'http://localhost:8081',   // Expo web (Metro default)
+        'http://localhost:8082',   // Expo web (alternate port)
         'http://127.0.0.1:3000',
         'http://127.0.0.1:3002',
         'http://127.0.0.1:3003',
-        'http://127.0.0.1:3004'
+        'http://127.0.0.1:3004',
+        'http://127.0.0.1:8081',
+        'http://127.0.0.1:8082'
     ];
+    // Allow Expo tunnel HTTPS origins so web can call API when CORS_ORIGINS includes them
+    const extra = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+    return [...new Set([...devOrigins, ...extra])];
 };
 
 // Initialize Redis
@@ -110,6 +132,12 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.use(express.json());
+app.use(requestId);
+app.use(requestLogger);
+app.use(require('./middleware/metricsMiddleware'));
+
+// Health endpoints (no rate limit)
+app.use(require('./routes/healthRoutes'));
 
 // Rate limiting middleware
 const {
@@ -126,6 +154,8 @@ app.use('/api/v1/', generalLimiter);
 // Routes
 const userAuthRoutes = require('./routes/userAuthRoutes');
 const tenantAuthRoutes = require('./routes/tenantAuthRoutes'); // New: Tenant auth
+const staffAuthRoutes = require('./routes/staffAuthRoutes'); // New: Staff app auth
+const staffAppRoutes = require('./routes/staffAppRoutes'); // New: Staff app internal APIs
 const bookingRoutes = require('./routes/bookingRoutes');
 const staffRoutes = require('./routes/staffRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
@@ -141,13 +171,30 @@ const adminSettingsController = require('./controllers/adminSettingsController')
 app.use('/api/v1/auth/user', authLimiter, userAuthRoutes); // End user auth
 // Apply strict auth limiting to tenant authentication
 app.use('/api/v1/auth/tenant', authLimiter, tenantAuthRoutes); // New: Tenant auth
+// Apply strict auth limiting to staff authentication
+app.use('/api/v1/auth/staff', authLimiter, staffAuthRoutes); // New: Staff app auth
 // Apply strict auth limiting to admin authentication
 app.use('/api/v1/auth/admin', authLimiter, superAdminAuthRoutes); // Super Admin auth
 app.use('/api/v1/admin', adminRoutes); // Admin APIs
 app.use('/api/v1/tenant', tenantRoutes); // Tenant dashboard APIs (protected)
 app.get('/api/v1/settings/global', adminSettingsController.getGlobalSettings); // Public global settings endpoint
+app.get('/api/v1/categories', async (req, res) => {
+    try {
+        const { ServiceCategory } = require('./models');
+        const categories = await ServiceCategory.findAll({
+            where: { isActive: true },
+            order: [['sortOrder', 'ASC']],
+            attributes: ['id', 'name_en', 'name_ar', 'slug', 'icon', 'sortOrder']
+        });
+        res.json({ success: true, categories });
+    } catch (error) {
+        console.error('Error fetching public categories:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch categories' });
+    }
+}); // Public service categories endpoint
 app.use('/api/v1/bookings', bookingRoutes);
 app.use('/api/v1/staff', staffRoutes);
+app.use('/api/v1/staff/me', staffAppRoutes); // New: Staff app APIs
 app.use('/api/v1/services', serviceRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/payments', paymentRoutes);
@@ -173,10 +220,19 @@ app.get('/api/v1/tenants', publicTenantController.getAllTenants);
 
 // Cleanup routes (temporary - for one-time operations)
 // Cleanup routes removed - one-time operations completed
-// Health Check
+// Root
 app.get('/', (req, res) => {
     res.json({ message: 'Rifah API is running' });
 });
+
+// 404 fallback (so error handler returns consistent JSON)
+app.use((req, res, next) => {
+    const err = new Error('Not found');
+    err.statusCode = 404;
+    next(err);
+});
+// Global error handler (must be last)
+app.use(errorHandler);
 
 // Test endpoint to verify uploads directory
 app.get('/test-uploads', (req, res) => {
@@ -195,14 +251,21 @@ app.get('/test-uploads', (req, res) => {
     }
 });
 
-// Create default super admin
+// Create default super admin (uses SUPERADMIN_PASSWORD from env; in production it is required by validateEnvironment)
 const createDefaultSuperAdmin = async () => {
+    const password = process.env.SUPERADMIN_PASSWORD;
+    if (!password) {
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('SUPERADMIN_PASSWORD is required in production');
+        }
+        return;
+    }
     try {
         const existingAdmin = await db.SuperAdmin.findOne({ where: { role: 'super_admin' } });
         if (!existingAdmin) {
             await db.SuperAdmin.create({
                 email: 'admin@rifah.sa',
-                password: 'RifahAdmin@2024', // Will be hashed automatically
+                password,
                 firstName: 'Super',
                 lastName: 'Admin',
                 role: 'super_admin',
@@ -213,7 +276,7 @@ const createDefaultSuperAdmin = async () => {
                     settings: { view: true, edit: true }
                 }
             });
-            console.log('✅ Default Super Admin created: admin@rifah.sa / RifahAdmin@2024');
+            console.log('✅ Default Super Admin created: admin@rifah.sa');
         }
     } catch (error) {
         console.log('Super admin setup:', error.message);
@@ -226,62 +289,76 @@ const startServer = async () => {
         await db.sequelize.authenticate();
         console.log('Database connection established successfully.');
 
-        // Sync models in dependency order (FAST MODE - no alterations)
-        await db.SuperAdmin.sync({ force: false });
-        await db.ActivityLog.sync({ force: false }); // Changed from alter: true for faster startup
-
-        // Subscription System (must be before Tenant sync for foreign keys)
-        await db.SubscriptionPackage.sync({ force: false }); // Base packages
-
-        await db.Tenant.sync({ force: false }); // Changed from alter: true for faster startup
-
-        // Subscription relationships (after Tenant)
-        await db.TenantSubscription.sync({ force: false }); // Tenant subscriptions
-        await db.TenantUsage.sync({ force: false }); // Usage tracking
-        await db.UsageAlert.sync({ force: false }); // Usage alerts
-
-        // TenantSettings - SKIP for now (will add later when needed)
-        // await db.TenantSettings.sync({ force: false });
-
-        await db.PlatformUser.sync({ force: false }); // Must be before PaymentMethod, Transaction, CustomerInsight
-        await db.PaymentMethod.sync({ force: false });
-        await db.User.sync({ force: false });
-        await db.Service.sync({ force: false }); // Columns already exist in DB
-        await db.Product.sync({ force: false }); // New: Product catalog
-        await db.Customer.sync({ force: false });
-        await db.Staff.sync({ force: false }); // Don't alter to avoid issues with existing data
-        await db.ServiceEmployee.sync({ force: false }); // New: Service-Employee junction
-        await db.StaffSchedule.sync({ force: false }); // Legacy schedule (kept for backward compatibility)
-        // New scheduling models (Phase 3) - use force: false to create if missing, but don't alter existing
-        // Note: If tables already exist with different schema, they won't be modified
-        try {
-            await db.StaffShift.sync({ force: false });
-        } catch (err) {
-            console.warn('⚠️  StaffShift sync warning:', err.message);
+        // Production: migrations-only — no sync(). Run migrations before deploy (see PHASE1_RELIABILITY.md).
+        if (process.env.NODE_ENV === 'production') {
+            console.log('✅ Production: using migrations only (sync skipped).');
+        } else {
+            // Sync models in dependency order (development/test only; force: false)
+            await db.SuperAdmin.sync({ force: false });
+            await db.ActivityLog.sync({ force: false });
+            await db.SubscriptionPackage.sync({ force: false });
+            await db.Tenant.sync({ force: false });
+            await db.TenantSubscription.sync({ force: false });
+            await db.TenantUsage.sync({ force: false });
+            await db.UsageAlert.sync({ force: false });
+            await db.PlatformUser.sync({ force: false });
+            await db.PaymentMethod.sync({ force: false });
+            await db.User.sync({ force: false });
+            await db.Service.sync({ force: false });
+            await db.Product.sync({ force: false });
+            await db.Customer.sync({ force: false });
+            await db.Staff.sync({ force: false });
+            await db.ServiceEmployee.sync({ force: false });
+            await db.StaffSchedule.sync({ force: false });
+            try {
+                await db.StaffShift.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffShift sync warning:', err.message);
+            }
+            try {
+                await db.StaffBreak.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffBreak sync warning:', err.message);
+            }
+            try {
+                await db.StaffTimeOff.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffTimeOff sync warning:', err.message);
+            }
+            try {
+                await db.StaffScheduleOverride.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffScheduleOverride sync warning:', err.message);
+            }
+            await db.Appointment.sync({ force: false });
+            // RBAC & Financials models (added for Phase 5-6)
+            try {
+                await db.StaffPermission.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffPermission sync warning:', err.message);
+            }
+            try {
+                await db.StaffPayroll.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffPayroll sync warning:', err.message);
+            }
+            try {
+                await db.StaffMessage.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  StaffMessage sync warning:', err.message);
+            }
+            try {
+                await db.Review.sync({ force: false });
+            } catch (err) {
+                console.warn('⚠️  Review sync warning:', err.message);
+            }
+            await db.CustomerInsight.sync({ force: false });
+            await db.Order.sync({ force: false });
+            await db.OrderItem.sync({ force: false });
+            await db.Transaction.sync({ force: false });
+            await db.PublicPageData.sync({ force: false });
+            console.log('✅ Database synced successfully.');
         }
-        try {
-            await db.StaffBreak.sync({ force: false });
-        } catch (err) {
-            console.warn('⚠️  StaffBreak sync warning:', err.message);
-        }
-        try {
-            await db.StaffTimeOff.sync({ force: false });
-        } catch (err) {
-            console.warn('⚠️  StaffTimeOff sync warning:', err.message);
-        }
-        try {
-            await db.StaffScheduleOverride.sync({ force: false });
-        } catch (err) {
-            console.warn('⚠️  StaffScheduleOverride sync warning:', err.message);
-        }
-        await db.Appointment.sync({ force: false }); // Don't alter to avoid issues with existing data
-        await db.CustomerInsight.sync({ force: false });
-        await db.Transaction.sync({ force: false });
-        await db.Order.sync({ force: false }); // Order system
-        await db.OrderItem.sync({ force: false }); // Order items
-        await db.PublicPageData.sync({ force: false }); // Public page data
-
-        console.log('✅ Database synced successfully.');
 
         // Create default super admin if none exists
         await createDefaultSuperAdmin();
@@ -290,9 +367,59 @@ const startServer = async () => {
         const { seedDefaultPackages } = require('./utils/seedPackages');
         await seedDefaultPackages();
 
-        app.listen(PORT, () => {
-            console.log(`🚀 Server is running on port ${PORT}`);
+        server = app.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 Server is running on port ${PORT} at 0.0.0.0`);
         });
+
+        // Billing cron: expire unpaid bills and suspend after grace (every hour)
+        const billingCron = require('./jobs/billingCron');
+        setInterval(() => {
+            billingCron.run().catch((err) => console.error('[BillingCron]', err.message));
+        }, 60 * 60 * 1000);
+
+        // Appointment reminder cron: send "notify me" reminders (every 10 minutes)
+        const reminderCron = require('./jobs/reminderCron');
+        setInterval(() => {
+            reminderCron.run().catch((err) => console.error('[ReminderCron]', err.message));
+        }, 10 * 60 * 1000);
+
+        const shutdown = async (signal) => {
+            console.log(`${signal} received, shutting down gracefully...`);
+            let done = false;
+            const forceExit = () => {
+                if (!done) {
+                    done = true;
+                    console.error('Shutdown timeout, forcing exit');
+                    process.exit(1);
+                }
+            };
+            const t = setTimeout(forceExit, SHUTDOWN_TIMEOUT_MS);
+
+            if (server) {
+                server.close((err) => {
+                    if (err) console.error('Server close error:', err);
+                });
+            }
+            if (stopPoolMetrics) stopPoolMetrics();
+            try {
+                await db.sequelize.close();
+                console.log('Database connection closed.');
+            } catch (e) {
+                console.error('Sequelize close error:', e);
+            }
+            try {
+                await redisService.close();
+                console.log('Redis connection closed.');
+            } catch (e) {
+                console.error('Redis close error:', e);
+            }
+            clearTimeout(t);
+            done = true;
+            process.exit(0);
+        };
+
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGINT', () => shutdown('SIGINT'));
     } catch (error) {
         console.error('Unable to connect to the database:', error);
     }

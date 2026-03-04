@@ -1,14 +1,14 @@
 const db = require('../models');
 const { Op } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
  * Get all tenants with filters and pagination
  */
 const listTenants = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const {
-            page = 1,
-            limit = 20,
             status,
             businessType,
             plan,
@@ -18,12 +18,11 @@ const listTenants = async (req, res) => {
             sortOrder = 'DESC'
         } = req.query;
 
-        const offset = (page - 1) * limit;
         const where = {};
 
         // Apply filters
         if (status) where.status = status;
-        if (businessType) where.businessType = businessType;
+        if (businessType) where.businessType = { [Op.contains]: [businessType] };
         if (plan) where.plan = plan;
         if (city) where.city = city;
 
@@ -41,8 +40,8 @@ const listTenants = async (req, res) => {
         const { count, rows: tenants } = await db.Tenant.findAndCountAll({
             where,
             order: [[sortBy, sortOrder]],
-            limit: parseInt(limit),
-            offset: parseInt(offset)
+            limit,
+            offset
         });
 
         res.json({
@@ -50,13 +49,16 @@ const listTenants = async (req, res) => {
             tenants,
             pagination: {
                 total: count,
-                page: parseInt(page),
-                limit: parseInt(limit),
+                page,
+                limit,
                 totalPages: Math.ceil(count / limit)
             }
         });
 
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('List tenants error:', error);
         res.status(500).json({
             success: false,
@@ -102,7 +104,19 @@ const getTenantDetails = async (req, res) => {
             include: [
                 {
                     model: db.User,
-                    attributes: ['id', 'email', 'role', 'createdAt']
+                    attributes: ['id', 'email', 'role', 'createdAt'],
+                    required: false
+                },
+                {
+                    model: db.TenantSubscription,
+                    as: 'subscription',
+                    required: false,
+                    include: [{
+                        model: db.SubscriptionPackage,
+                        as: 'package',
+                        attributes: ['id', 'name', 'name_ar', 'slug', 'monthlyPrice', 'sixMonthPrice', 'annualPrice', 'limits'],
+                        required: false
+                    }]
                 }
             ]
         });
@@ -144,8 +158,23 @@ const getTenantDetails = async (req, res) => {
     }
 };
 
+const { generateBillNumber, generatePaymentToken } = require('../utils/billUtils');
+
 /**
- * Approve tenant
+ * Check if package is free (no payment required)
+ */
+function isFreePackage(pkg) {
+    if (!pkg) return true;
+    const m = parseFloat(pkg.monthlyPrice) || 0;
+    const s = parseFloat(pkg.sixMonthPrice) || 0;
+    const a = parseFloat(pkg.annualPrice) || 0;
+    if (m > 0 || s > 0 || a > 0) return false;
+    const slug = (pkg.slug || '').toLowerCase();
+    return slug === 'free' || slug === 'free-trial';
+}
+
+/**
+ * Approve tenant — branch by plan: Free → ACTIVE + email; Paid → APPROVED_PENDING_PAYMENT + Bill + 48h grace + email with Pay link
  */
 const approveTenant = async (req, res) => {
     try {
@@ -168,25 +197,122 @@ const approveTenant = async (req, res) => {
             });
         }
 
-        // Update tenant status
+        // Update tenant status (approved)
         await tenant.update({
             status: 'approved',
             approvedAt: new Date(),
             approvedBy: req.adminId,
             planStartDate: new Date(),
-            planEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days trial
+            planEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // placeholder; real end set from subscription
         });
 
-        // Initialize subscription and usage tracking
-        const { initializeTenantSubscription } = require('../utils/initializeTenantSubscription');
-        try {
-            await initializeTenantSubscription(tenant.id, 'free-trial');
-        } catch (subscriptionError) {
-            console.error('Failed to initialize subscription:', subscriptionError);
-            // Don't fail the approval if subscription init fails
+        const now = new Date();
+        const subscription = await db.TenantSubscription.findOne({
+            where: { tenantId: tenant.id, status: 'PENDING_APPROVAL' },
+            include: [{ model: db.SubscriptionPackage, as: 'package' }]
+        });
+
+        const { sendApprovalEmail, sendApprovalEmailPaid } = require('../utils/emailService');
+        let isPaidPlan = false;
+
+        if (subscription && subscription.package) {
+            const pkg = subscription.package;
+            const isFree = isFreePackage(pkg);
+            isPaidPlan = !isFree;
+
+            if (isFree) {
+                // Free plan: set subscription ACTIVE, set period dates
+                const periodEnd = new Date(now);
+                if (subscription.billingCycle === 'monthly') periodEnd.setMonth(periodEnd.getMonth() + 1);
+                else if (subscription.billingCycle === 'sixMonth') periodEnd.setMonth(periodEnd.getMonth() + 6);
+                else if (subscription.billingCycle === 'annual') periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+                else periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+                await subscription.update({
+                    status: 'active',
+                    approvedAt: now,
+                    approvedByAdminId: req.adminId,
+                    currentPeriodStart: now,
+                    currentPeriodEnd: periodEnd,
+                    nextBillingDate: periodEnd
+                });
+
+                // Ensure usage record exists
+                let usage = await db.TenantUsage.findOne({ where: { tenantId: tenant.id } });
+                if (!usage) {
+                    await db.TenantUsage.create({
+                        tenantId: tenant.id,
+                        currentPeriod: now.toISOString().substring(0, 7),
+                        bookingsThisMonth: 0,
+                        bookingsTotal: 0,
+                        activeStaff: 0,
+                        activeServices: 0,
+                        activeProducts: 0,
+                        storageUsedMB: 0,
+                        emailCampaignsThisMonth: 0,
+                        smsCampaignsThisMonth: 0,
+                        apiCallsThisMonth: 0,
+                        lastResetDate: now
+                    });
+                }
+
+                sendApprovalEmail(tenant).catch(err => console.error('[Approval] Failed to send approval email:', err.message));
+            } else {
+                // Paid plan: APPROVED_PENDING_PAYMENT, 48h grace, create Bill, send email with Pay link
+                const graceEndsAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+                const dueDate = new Date(graceEndsAt);
+                const dueDateStr = dueDate.toISOString().slice(0, 10);
+
+                await subscription.update({
+                    status: 'APPROVED_PENDING_PAYMENT',
+                    approvedAt: now,
+                    approvedByAdminId: req.adminId,
+                    gracePeriodEnds: graceEndsAt
+                });
+
+                const amount = subscription.billingCycle === 'monthly' ? parseFloat(pkg.monthlyPrice)
+                    : subscription.billingCycle === 'sixMonth' ? parseFloat(pkg.sixMonthPrice)
+                        : parseFloat(pkg.annualPrice);
+                const billNumber = await generateBillNumber();
+                const paymentToken = generatePaymentToken();
+
+                await db.Bill.create({
+                    tenantId: tenant.id,
+                    tenantSubscriptionId: subscription.id,
+                    billNumber,
+                    amount: amount || 0,
+                    currency: 'SAR',
+                    dueDate: dueDateStr,
+                    status: 'UNPAID',
+                    paymentToken,
+                    paymentTokenExpiresAt: graceEndsAt,
+                    planSnapshot: {
+                        packageName: pkg.name,
+                        packageNameAr: pkg.name_ar,
+                        billingCycle: subscription.billingCycle
+                    },
+                    type: 'initial'
+                });
+
+                const baseUrl = process.env.TENANT_DASHBOARD_URL || process.env.PAYMENT_PAGE_BASE_URL || 'http://localhost:3003';
+                const locale = (tenant.preferredLocale || 'ar').toLowerCase().startsWith('ar') ? 'ar' : 'en';
+                const paymentUrl = `${baseUrl.replace(/\/$/, '')}/${locale}/payment?token=${paymentToken}`;
+
+                sendApprovalEmailPaid(tenant, { paymentUrl, billNumber, amount, dueDate: dueDateStr }).catch(err =>
+                    console.error('[Approval] Failed to send approval-please-pay email:', err.message)
+                );
+            }
+        } else {
+            // No PENDING_APPROVAL subscription (e.g. legacy): initialize free trial
+            const { initializeTenantSubscription } = require('../utils/initializeTenantSubscription');
+            try {
+                await initializeTenantSubscription(tenant.id, 'free-trial');
+            } catch (subscriptionError) {
+                console.error('Failed to initialize subscription:', subscriptionError);
+            }
+            sendApprovalEmail(tenant).catch(err => console.error('[Approval] Failed to send approval email:', err.message));
         }
 
-        // Log activity
         await db.ActivityLog.create({
             entityType: 'tenant',
             entityId: tenant.id,
@@ -199,19 +325,15 @@ const approveTenant = async (req, res) => {
             userAgent: req.headers['user-agent']
         });
 
-        // Send approval email (don't wait for it, don't fail if it errors)
-        const { sendApprovalEmail } = require('../utils/emailService');
-        sendApprovalEmail(tenant).catch(err => {
-            console.error('[Approval] Failed to send approval email:', err.message);
-            // Don't throw - email failure shouldn't affect approval
-        });
+        const message = isPaidPlan
+            ? 'Tenant approved. Payment link sent — please pay within 48 hours.'
+            : 'Tenant approved successfully. Subscription activated.';
 
         res.json({
             success: true,
-            message: 'Tenant approved successfully. Free trial subscription activated.',
+            message,
             tenant
         });
-
     } catch (error) {
         console.error('Approve tenant error:', error);
         res.status(500).json({
@@ -535,6 +657,106 @@ async function getBookingStats(dbSchema) {
     }
 }
 
+/**
+ * Delete a tenant and all related data (cascade).
+ * Used by admin dashboard clients table.
+ */
+const deleteTenant = async (req, res) => {
+    const { id: tenantId } = req.params;
+    try {
+        const tenant = await db.Tenant.findByPk(tenantId);
+        if (!tenant) {
+            return res.status(404).json({ success: false, message: 'Tenant not found' });
+        }
+
+        const transaction = await db.sequelize.transaction();
+        try {
+            // Delete in dependency order to respect FKs (child tables first)
+
+            // Bills (tenant + subscription scoped)
+            await db.Bill.destroy({ where: { tenantId }, transaction });
+
+            // Subscriptions
+            await db.TenantSubscription.destroy({ where: { tenantId }, transaction });
+
+            // Orders: payment transactions and order items first
+            const orders = await db.Order.findAll({ where: { tenantId }, attributes: ['id'], transaction });
+            const orderIds = orders.map(o => o.id);
+            if (orderIds.length > 0) {
+                await db.PaymentTransaction.destroy({ where: { orderId: orderIds }, transaction });
+                await db.OrderItem.destroy({ where: { orderId: orderIds }, transaction });
+            }
+            await db.Order.destroy({ where: { tenantId }, transaction });
+
+            // Transactions (tenant financial records)
+            if (db.Transaction) {
+                await db.Transaction.destroy({ where: { tenantId }, transaction });
+            }
+
+            // Reviews, payroll, messages (tenant-scoped)
+            if (db.Review) await db.Review.destroy({ where: { tenantId }, transaction });
+            if (db.StaffPayroll) await db.StaffPayroll.destroy({ where: { tenantId }, transaction });
+            if (db.StaffMessage) await db.StaffMessage.destroy({ where: { tenantId }, transaction });
+
+            // Appointments
+            await db.Appointment.destroy({ where: { tenantId }, transaction });
+
+            // Services: service_employees first, then services
+            const services = await db.Service.findAll({ where: { tenantId }, attributes: ['id'], transaction });
+            const serviceIds = services.map(s => s.id);
+            if (serviceIds.length > 0 && db.ServiceEmployee) {
+                await db.ServiceEmployee.destroy({ where: { serviceId: serviceIds }, transaction });
+            }
+            await db.Service.destroy({ where: { tenantId }, transaction });
+
+            // Products, usage, alerts, insights
+            await db.Product.destroy({ where: { tenantId }, transaction });
+            if (db.TenantUsage) await db.TenantUsage.destroy({ where: { tenantId }, transaction });
+            if (db.UsageAlert) await db.UsageAlert.destroy({ where: { tenantId }, transaction });
+            if (db.CustomerInsight) await db.CustomerInsight.destroy({ where: { tenantId }, transaction });
+
+            // Staff-related: tables use staffId, so get staff ids for this tenant first
+            const staffList = await db.Staff.findAll({ where: { tenantId }, attributes: ['id'], transaction });
+            const staffIds = staffList.map(s => s.id);
+            if (staffIds.length > 0) {
+                if (db.StaffSchedule) await db.StaffSchedule.destroy({ where: { staffId: staffIds }, transaction });
+                if (db.StaffScheduleOverride) await db.StaffScheduleOverride.destroy({ where: { staffId: staffIds }, transaction });
+                if (db.StaffTimeOff) await db.StaffTimeOff.destroy({ where: { staffId: staffIds }, transaction });
+                if (db.StaffBreak) await db.StaffBreak.destroy({ where: { staffId: staffIds }, transaction });
+                if (db.StaffShift) await db.StaffShift.destroy({ where: { staffId: staffIds }, transaction });
+            }
+            await db.Staff.destroy({ where: { tenantId }, transaction });
+
+            // Tenant settings and public page
+            await db.TenantSettings.destroy({ where: { tenantId }, transaction });
+            if (db.PublicPageData) await db.PublicPageData.destroy({ where: { tenantId }, transaction });
+
+            // Permissions and hot deals
+            await db.StaffPermission.destroy({ where: { tenantId }, transaction });
+            await db.HotDeal.destroy({ where: { tenantId }, transaction });
+
+            // Platform users linked to tenant
+            await db.User.destroy({ where: { tenantId }, transaction });
+
+            // Finally the tenant
+            await db.Tenant.destroy({ where: { id: tenantId }, transaction });
+
+            await transaction.commit();
+            return res.json({ success: true, message: 'Tenant and all related data deleted' });
+        } catch (innerError) {
+            await transaction.rollback();
+            throw innerError;
+        }
+    } catch (error) {
+        console.error('Delete tenant error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete tenant',
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     listTenants,
     getPendingTenants,
@@ -544,6 +766,7 @@ module.exports = {
     suspendTenant,
     activateTenant,
     updateTenant,
-    getTenantActivities
+    getTenantActivities,
+    deleteTenant
 };
 

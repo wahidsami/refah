@@ -18,7 +18,9 @@ const tenantSettingsController = require('../controllers/tenantSettingsControlle
 const tenantReportsController = require('../controllers/tenantReportsController');
 const tenantPublicPageController = require('../controllers/tenantPublicPageController');
 const tenantScheduleController = require('../controllers/tenantScheduleController');
+const tenantPaymentController = require('../controllers/tenantPaymentController');
 const { authenticateTenant } = require('../middleware/authTenant');
+const setTenantContext = require('../middleware/setTenantContext');
 const multer = require('multer');
 const path = require('path');
 
@@ -34,12 +36,42 @@ const settingsStorage = multer.diskStorage({
 });
 const settingsUpload = multer({ storage: settingsStorage });
 
-// All routes require authentication
+// All routes require authentication; set tenant context for RLS (app.tenant_id)
 router.use(authenticateTenant);
+router.use(require('../middleware/allowSuspendedBillingOnly').allowSuspendedBillingOnlyTenant);
+router.use(setTenantContext);
 
 // Profile management
 router.get('/profile', tenantAuthController.getProfile);
 router.put('/profile', tenantAuthController.updateProfile);
+
+// Bills (My Bills)
+const tenantBillsController = require('../controllers/tenantBillsController');
+router.get('/bills', tenantBillsController.getBills);
+
+// Messaging
+const tenantMessagesController = require('../controllers/tenantMessagesController');
+router.get('/messages', tenantMessagesController.getMessages);
+router.post('/messages', tenantMessagesController.sendMessage);
+router.delete('/messages/:id', tenantMessagesController.deleteMessage);
+
+// Payroll
+const tenantPayrollController = require('../controllers/tenantPayrollController');
+router.get('/payroll', tenantPayrollController.getPayrollRecords);
+router.post('/payroll', tenantPayrollController.generatePayroll);
+router.patch('/payroll/:id/status', tenantPayrollController.updatePayrollStatus);
+
+// Reviews (getAllReviews, updateReview live in tenantPayrollController)
+router.get('/reviews', tenantPayrollController.getAllReviews);
+router.patch('/reviews/:id', tenantPayrollController.updateReview);
+
+// Customer push notifications (marketing; gated by inAppMarketingNotifications)
+const tenantNotificationController = require('../controllers/tenantNotificationController');
+router.get('/notifications/usage', tenantNotificationController.getPushUsage);
+router.post('/notifications/send', tenantNotificationController.sendMarketingPush);
+router.get('/notifications/history', tenantNotificationController.getPushHistory);
+router.get('/notifications/history/:id', tenantNotificationController.getPushHistoryDetail);
+router.get('/notifications/history/:id/recipients', tenantNotificationController.getPushHistoryRecipients);
 
 // Dashboard stats and data
 router.get('/dashboard/stats', tenantDashboardController.getDashboardStats);
@@ -53,6 +85,13 @@ router.post('/employees', tenantEmployeeController.uploadPhoto, tenantEmployeeCo
 router.put('/employees/:id', tenantEmployeeController.uploadPhoto, tenantEmployeeController.updateEmployee);
 router.delete('/employees/:id', tenantEmployeeController.deleteEmployee);
 
+// Staff App Access & Permissions Management
+router.put('/employees/:id/app-access', tenantEmployeeController.updateAppAccess);
+router.post('/employees/:id/send-invite', tenantEmployeeController.sendAppInvite);
+router.post('/employees/:id/reset-password', tenantEmployeeController.resetStaffPassword);
+router.get('/employees/:id/permissions', tenantEmployeeController.getStaffPermissions);
+router.put('/employees/:id/permissions', tenantEmployeeController.updateStaffPermissions);
+
 // Product management
 router.get('/products', tenantProductController.getProducts);
 router.get('/products/:id', tenantProductController.getProduct);
@@ -61,6 +100,7 @@ router.put('/products/:id', tenantProductController.uploadImages, tenantProductC
 router.delete('/products/:id', tenantProductController.deleteProduct);
 
 // Service management
+router.get('/services/categories', tenantServiceController.getServiceCategories);
 router.get('/services', tenantServiceController.getServices);
 router.get('/services/:id', tenantServiceController.getService);
 router.post('/services', tenantServiceController.uploadImage, tenantServiceController.createService);
@@ -72,6 +112,10 @@ router.get('/appointments', tenantAppointmentController.getAppointments);
 router.get('/appointments/calendar', tenantAppointmentController.getCalendarAppointments);
 router.get('/appointments/stats', tenantAppointmentController.getAppointmentStats);
 router.get('/appointments/:id', tenantAppointmentController.getAppointment);
+router.get('/appointments/:id/payment', tenantPaymentController.getPaymentSummary);
+router.post('/appointments/:id/record-payment', tenantPaymentController.recordPayment);
+router.post('/appointments/:id/refund', tenantPaymentController.refundPayment);
+router.patch('/appointments/:id/reschedule', tenantAppointmentController.rescheduleAppointment);
 router.patch('/appointments/:id/status', tenantAppointmentController.updateAppointmentStatus);
 router.patch('/appointments/:id/payment', tenantAppointmentController.updatePaymentStatus);
 
@@ -98,6 +142,7 @@ router.patch('/orders/:id/status', tenantOrderController.updateOrderStatus);
 router.patch('/orders/:id/payment', tenantOrderController.updatePaymentStatus);
 
 // Settings management
+router.get('/settings/limits', tenantSettingsController.getSubscriptionLimits);
 router.get('/settings', tenantSettingsController.getSettings);
 router.put('/settings/business', tenantSettingsController.updateBusinessInfo);
 router.put('/settings/working-hours', tenantSettingsController.updateWorkingHours);
@@ -111,6 +156,7 @@ router.post('/settings/cover', settingsUpload.single('coverImage'), tenantSettin
 
 // Reports and analytics
 router.get('/reports/summary', tenantReportsController.getDashboardSummary);
+router.get('/reports/full', tenantReportsController.getFullReport);
 router.get('/reports/booking-trends', tenantReportsController.getBookingTrends);
 router.get('/reports/service-performance', tenantReportsController.getServicePerformance);
 router.get('/reports/employee-performance', tenantReportsController.getEmployeePerformance);
@@ -146,5 +192,15 @@ router.get('/employees/:id/overrides', tenantScheduleController.getOverrides);
 router.post('/employees/:id/overrides', tenantScheduleController.createOverride);
 router.put('/employees/:id/overrides/:overrideId', tenantScheduleController.updateOverride);
 router.delete('/employees/:id/overrides/:overrideId', tenantScheduleController.deleteOverride);
+
+// AI Content Generation (Phase 21)
+const aiController = require('../controllers/tenant/aiController');
+const { checkTenantFeature } = require('../middleware/authTenant');
+
+// Protect AI routes with checkTenantFeature to ensure they have the subscription addon
+router.post('/ai/generate-product', checkTenantFeature('hasAIContentAssistant'), aiController.generateProduct);
+router.post('/ai/generate-service', checkTenantFeature('hasAIContentAssistant'), aiController.generateService);
+router.post('/ai/generate-about-us', checkTenantFeature('hasAIContentAssistant'), aiController.generateAboutUs);
+router.post('/ai/translate', checkTenantFeature('hasAIContentAssistant'), aiController.translateText);
 
 module.exports = router;

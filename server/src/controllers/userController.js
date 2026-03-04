@@ -84,6 +84,7 @@ const updateProfile = async (req, res) => {
             addressBuilding,
             addressFloor,
             addressApartment,
+            addressDistrict,
             addressPhone,
             addressNotes
         } = req.body;
@@ -115,6 +116,7 @@ const updateProfile = async (req, res) => {
         if (addressBuilding !== undefined) user.addressBuilding = addressBuilding;
         if (addressFloor !== undefined) user.addressFloor = addressFloor;
         if (addressApartment !== undefined) user.addressApartment = addressApartment;
+        if (addressDistrict !== undefined) user.addressDistrict = addressDistrict;
         if (addressPhone !== undefined) user.addressPhone = addressPhone;
         if (addressNotes !== undefined) user.addressNotes = addressNotes;
 
@@ -250,6 +252,9 @@ const changePassword = async (req, res) => {
  */
 const getUserBookings = async (req, res) => {
     try {
+        const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
+
         const { status, startDate, endDate, tenantId } = req.query;
 
         const where = {
@@ -265,23 +270,34 @@ const getUserBookings = async (req, res) => {
             if (endDate) where.startTime[Op.lte] = new Date(endDate);
         }
 
-        const bookings = await db.Appointment.findAll({
+        const { count, rows: bookings } = await db.Appointment.findAndCountAll({
             where,
             include: [
                 { model: db.Service, as: 'service' },
                 { model: db.Staff, as: 'staff' },
                 { model: db.Tenant, as: 'tenant', required: false }
             ],
-            order: [['startTime', 'DESC']]
+            order: [['startTime', 'DESC']],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
-            bookings: bookings,
-            appointments: bookings, // Also include as 'appointments' for compatibility
-            count: bookings.length
+            bookings,
+            appointments: bookings,
+            count: bookings.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get user bookings error:', error);
         res.status(500).json({
             success: false,
@@ -356,6 +372,114 @@ const getServicesHistory = async (req, res) => {
     }
 };
 
+/**
+ * Get current user's notifications (inbox)
+ * GET /api/v1/users/notifications
+ */
+const getNotifications = async (req, res) => {
+    try {
+        const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
+        const { limit, offset, page } = parseLimitOffset(req, 30, DEFAULT_MAX_PAGE_SIZE);
+
+        const { count, rows: notifications } = await db.CustomerNotification.findAndCountAll({
+            where: { platformUserId: req.userId },
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset,
+            attributes: ['id', 'type', 'title', 'body', 'data', 'readAt', 'createdAt', 'tenantId']
+        });
+
+        res.json({
+            success: true,
+            notifications,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
+        });
+    } catch (error) {
+        console.error('Get notifications error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Mark a notification as read
+ * PATCH /api/v1/users/notifications/:id/read
+ */
+const markNotificationRead = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const notif = await db.CustomerNotification.findOne({
+            where: { id, platformUserId: req.userId }
+        });
+        if (!notif) {
+            return res.status(404).json({ success: false, message: 'Notification not found' });
+        }
+        await notif.update({ readAt: new Date() });
+        res.json({ success: true, data: notif });
+    } catch (error) {
+        console.error('Mark notification read error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * Add tip to a completed appointment
+ * POST /api/v1/users/bookings/:id/tip
+ * Body: { amount: number, paymentMethod?: 'cash' | 'card' | 'wallet' }
+ */
+const addAppointmentTip = async (req, res) => {
+    try {
+        const { id: appointmentId } = req.params;
+        const { amount, paymentMethod } = req.body;
+        const platformUserId = req.userId;
+
+        if (!amount || typeof amount !== 'number' || amount <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid tip amount' });
+        }
+
+        const appointment = await db.Appointment.findByPk(appointmentId);
+        if (!appointment) {
+            return res.status(404).json({ success: false, message: 'Appointment not found' });
+        }
+        if (appointment.platformUserId !== platformUserId) {
+            return res.status(403).json({ success: false, message: 'Not your appointment' });
+        }
+        if (appointment.status !== 'completed') {
+            return res.status(400).json({ success: false, message: 'Can only add tip for completed appointments' });
+        }
+
+        const maxTip = parseFloat(appointment.price || 0);
+        const amountNum = parseFloat(amount);
+        if (amountNum > maxTip) {
+            return res.status(400).json({ success: false, message: 'Tip cannot exceed appointment price' });
+        }
+
+        if (appointment.tipAmount != null && parseFloat(appointment.tipAmount) > 0) {
+            return res.status(400).json({ success: false, message: 'Tip already recorded for this appointment' });
+        }
+
+        const method = (paymentMethod && ['cash', 'card', 'wallet'].includes(paymentMethod)) ? paymentMethod : 'cash';
+        await appointment.update({
+            tipAmount: amountNum,
+            tipPaidAt: new Date(),
+            tipPaymentMethod: method
+        });
+
+        res.json({
+            success: true,
+            message: 'Tip recorded',
+            appointment: await db.Appointment.findByPk(appointmentId, { attributes: ['id', 'tipAmount', 'tipPaidAt', 'tipPaymentMethod'] })
+        });
+    } catch (error) {
+        console.error('Add tip error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     getProfile,
     updateProfile,
@@ -363,6 +487,9 @@ module.exports = {
     changePassword,
     getUserBookings,
     getServicesHistory,
+    getNotifications,
+    markNotificationRead,
+    addAppointmentTip,
     uploadMiddleware: upload.single('photo')
 };
 

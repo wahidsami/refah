@@ -10,6 +10,7 @@ router.get('/packages', subscriptionController.getAvailablePackages);
 
 // All routes below require tenant authentication
 router.use(authenticateTenant);
+router.use(require('../middleware/allowSuspendedBillingOnly').allowSuspendedBillingOnlySubscription);
 
 // Get current subscription
 router.get('/current', subscriptionController.getCurrentSubscription);
@@ -23,8 +24,11 @@ router.get('/alerts', subscriptionController.getUsageAlerts);
 // Acknowledge alert
 router.patch('/alerts/:alertId/acknowledge', subscriptionController.acknowledgeAlert);
 
-// Request subscription change (upgrade/downgrade)
+// Request subscription change (upgrade/downgrade) — legacy, logs only
 router.post('/change-request', subscriptionController.requestSubscriptionChange);
+
+// Request upgrade — creates Bill, 48h grace, returns payment link
+router.post('/request-upgrade', subscriptionController.requestUpgrade);
 
 module.exports = router;
 

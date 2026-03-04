@@ -1,42 +1,41 @@
 /**
  * Public Routes
  * No authentication required - for public tenant websites
+ * publicTenantContext applied only to tenant-scoped routes (/:tenantId or /:slug), not to /tenants.
  */
 
 const express = require('express');
 const router = express.Router();
 const publicTenantController = require('../controllers/publicTenantController');
+const publicBillPaymentController = require('../controllers/publicBillPaymentController');
+const publicTenantContext = require('../middleware/publicTenantContext');
+const { optionalAuth } = require('../middleware/authUser');
 
-// Get all active tenants (for browse/discovery)
+// Token-based bill payment (no auth)
+router.get('/bills/by-token/:token', publicBillPaymentController.getBillByToken);
+router.post('/bills/by-token/:token/pay', publicBillPaymentController.payBillByToken);
+
+// Discovery: all active tenants — no tenant context, no slug lookup
 router.get('/tenants', publicTenantController.getAllTenants);
 
-// Get tenant by slug
-router.get('/tenant/:slug', publicTenantController.getTenantBySlug);
+// Top service providers (staff across tenants) for customer app home
+router.get('/top-providers', publicTenantController.getTopProviders);
 
-// Get public page data
-router.get('/tenant/:tenantId/page-data', publicTenantController.getPublicPageData);
-
-// Services
-router.get('/tenant/:tenantId/services', publicTenantController.getPublicServices);
-// Staff by service - MUST come before /services/:id to avoid route conflict
-router.get('/tenant/:tenantId/services/:serviceId/staff', publicTenantController.getPublicStaffByService);
-router.get('/tenant/:tenantId/services/:id', publicTenantController.getPublicService);
-
-// Products
-router.get('/tenant/:tenantId/products', publicTenantController.getPublicProducts);
-router.get('/tenant/:tenantId/products/:id', publicTenantController.getPublicProduct);
-
-// Staff
-router.get('/tenant/:tenantId/staff', publicTenantController.getPublicStaff);
-
-// Bookings (public, no auth)
-router.post('/tenant/:tenantId/bookings', publicTenantController.createPublicBooking);
-
-// Orders (public, no auth)
-router.post('/tenant/:tenantId/orders', publicTenantController.createPublicOrder);
-
-// Contact form
-router.post('/tenant/:tenantId/contact', publicTenantController.submitContactForm);
+// Tenant-scoped routes: derive req.tenantId from :slug or :tenantId and set RLS context
+router.get('/tenant/:slug', publicTenantContext, publicTenantController.getTenantBySlug);
+router.get('/tenant/:tenantId/page-data', publicTenantContext, publicTenantController.getPublicPageData);
+router.get('/tenant/:tenantId/services', publicTenantContext, publicTenantController.getPublicServices);
+router.get('/tenant/:tenantId/services/:serviceId/staff', publicTenantContext, publicTenantController.getPublicStaffByService);
+router.get('/tenant/:tenantId/services/:id', publicTenantContext, publicTenantController.getPublicService);
+router.get('/tenant/:tenantId/products', publicTenantContext, publicTenantController.getPublicProducts);
+router.get('/tenant/:tenantId/products/:id', publicTenantContext, publicTenantController.getPublicProduct);
+router.get('/tenant/:tenantId/staff', publicTenantContext, publicTenantController.getPublicStaff);
+router.get('/tenant/:tenantId/staff/:staffId', publicTenantContext, publicTenantController.getPublicStaffById);
+router.post('/tenant/:tenantId/bookings', publicTenantContext, publicTenantController.createPublicBooking);
+router.post('/tenant/:tenantId/orders', publicTenantContext, publicTenantController.createPublicOrder);
+router.get('/tenant/:tenantId/reviews', publicTenantContext, publicTenantController.getPublicReviews);
+router.post('/tenant/:tenantId/reviews', optionalAuth, publicTenantContext, publicTenantController.createReview);
+router.post('/tenant/:tenantId/contact', publicTenantContext, publicTenantController.submitContactForm);
 
 module.exports = router;
 

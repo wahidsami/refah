@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { Op } = require('sequelize');
+const { parseLimitOffset, DEFAULT_MAX_PAGE_SIZE } = require('../utils/pagination');
 
 /**
  * Get global settings for tax and commission rates
@@ -17,7 +18,7 @@ async function getGlobalSettings() {
         const settings = await db.GlobalSettings.findOne({
             order: [['updatedAt', 'DESC']]
         });
-        
+
         if (settings) {
             return {
                 productCommissionRate: parseFloat(settings.productCommissionRate),
@@ -35,25 +36,29 @@ async function getGlobalSettings() {
 }
 
 /**
- * Calculate final price for product
+ * Calculate final price: (raw + platform fee) then tax on that sum.
+ * Formula: subtotal = raw + platform fee; tax = 15% of subtotal; final = subtotal + tax.
  */
 function calculateProductPrice(rawPrice, taxRate, commissionRate) {
     const raw = parseFloat(rawPrice || 0);
-    const tax = raw * (parseFloat(taxRate || 15) / 100);
-    const commission = raw * (parseFloat(commissionRate || 10) / 100);
-    return parseFloat((raw + tax + commission).toFixed(2));
+    const tr = parseFloat(taxRate || 15) / 100;
+    const cr = parseFloat(commissionRate || 10) / 100;
+    const platformFee = raw * cr;
+    const subtotalBeforeTax = raw + platformFee;
+    const taxAmount = subtotalBeforeTax * tr;
+    return parseFloat((subtotalBeforeTax + taxAmount).toFixed(2));
 }
 
 // Configure multer for product image uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadPath = path.join(__dirname, '../../uploads/tenants/products');
-        
+
         // Create directory if it doesn't exist
         if (!fs.existsSync(uploadPath)) {
             fs.mkdirSync(uploadPath, { recursive: true });
         }
-        
+
         cb(null, uploadPath);
     },
     filename: function (req, file, cb) {
@@ -93,11 +98,12 @@ exports.uploadImages = upload.array('images', 5);
  */
 exports.getProducts = async (req, res) => {
     try {
+        const { limit, offset, page } = parseLimitOffset(req, 20, DEFAULT_MAX_PAGE_SIZE);
         const tenantId = req.tenantId;
         const { isAvailable, category, search } = req.query;
 
         const where = { tenantId };
-        
+
         if (isAvailable !== undefined) {
             where.isAvailable = isAvailable === 'true';
         }
@@ -116,17 +122,28 @@ exports.getProducts = async (req, res) => {
             ];
         }
 
-        const products = await db.Product.findAll({
+        const { count, rows: products } = await db.Product.findAndCountAll({
             where,
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset
         });
 
         res.json({
             success: true,
             products,
-            count: products.length
+            count: products.length,
+            pagination: {
+                total: count,
+                page,
+                limit,
+                totalPages: Math.ceil(count / limit)
+            }
         });
     } catch (error) {
+        if (error.statusCode === 400) {
+            return res.status(400).json({ success: false, message: error.message });
+        }
         console.error('Get products error:', error);
         res.status(500).json({
             success: false,
@@ -201,7 +218,9 @@ exports.createProduct = async (req, res) => {
             features_en,
             features_ar,
             isAvailable = true,
-            isFeatured = false
+            isFeatured = false,
+            allowsDelivery = true,
+            allowsPickup = true
         } = req.body;
 
         // Validation
@@ -221,6 +240,20 @@ exports.createProduct = async (req, res) => {
             });
         }
 
+        // Enforce maxProducts limit
+        const { checkResourceLimit } = require('../utils/tenantLimitsUtil');
+        const limitCheck = await checkResourceLimit(tenantId, 'maxProducts', async () => {
+            return await db.Product.count({ where: { tenantId } });
+        });
+
+        if (!limitCheck.allowed) {
+            await transaction.rollback();
+            return res.status(403).json({
+                success: false,
+                message: `Upgrade your subscription to add more products. Current plan (${limitCheck.packageName}) limit: ${limitCheck.limit}`
+            });
+        }
+
         // Get global settings for tax and commission rates
         const globalSettings = await getGlobalSettings();
         const taxRate = globalSettings.taxRate;
@@ -234,6 +267,16 @@ exports.createProduct = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Valid stock quantity is required'
+            });
+        }
+
+        const allowDelivery = allowsDelivery === true || allowsDelivery === 'true';
+        const allowPickup = allowsPickup === true || allowsPickup === 'true';
+        if (!allowDelivery && !allowPickup) {
+            await transaction.rollback();
+            return res.status(400).json({
+                success: false,
+                message: 'At least one of allowsDelivery or allowsPickup must be true'
             });
         }
 
@@ -315,7 +358,9 @@ exports.createProduct = async (req, res) => {
             features_en: features_en || null,
             features_ar: features_ar || null,
             isAvailable: isAvailable === true || isAvailable === 'true',
-            isFeatured: isFeatured === true || isFeatured === 'true'
+            isFeatured: isFeatured === true || isFeatured === 'true',
+            allowsDelivery: allowDelivery,
+            allowsPickup: allowPickup
         }, { transaction });
 
         await transaction.commit();
@@ -327,7 +372,7 @@ exports.createProduct = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded files if product creation fails
         if (req.files && req.files.length > 0) {
             req.files.forEach(file => {
@@ -377,7 +422,9 @@ exports.updateProduct = async (req, res) => {
             features_en,
             features_ar,
             isAvailable,
-            isFeatured
+            isFeatured,
+            allowsDelivery,
+            allowsPickup
         } = req.body;
 
         // Find product
@@ -427,7 +474,7 @@ exports.updateProduct = async (req, res) => {
         let imagePaths = product.images || (product.image ? [product.image] : []);
         if (req.files && req.files.length > 0) {
             const newImagePaths = req.files.map(file => file.path.replace(/\\/g, '/').split('uploads/')[1]);
-            
+
             // Validation: Maximum 5 images total
             const totalImages = imagePaths.length + newImagePaths.length;
             if (totalImages > 5) {
@@ -443,7 +490,7 @@ exports.updateProduct = async (req, res) => {
                     message: 'Maximum 5 images allowed per product'
                 });
             }
-            
+
             // Add new images to existing ones
             imagePaths = [...imagePaths, ...newImagePaths];
         } else if (req.file) {
@@ -487,13 +534,18 @@ exports.updateProduct = async (req, res) => {
         if (howToUse_ar !== undefined) product.howToUse_ar = howToUse_ar || null;
         if (features_en !== undefined) product.features_en = features_en || null;
         if (features_ar !== undefined) product.features_ar = features_ar || null;
-        
+
         // Update images
         product.images = imagePaths;
         product.image = imagePaths[0] || product.image; // Legacy field (first image)
-        
+
         if (isAvailable !== undefined) product.isAvailable = isAvailable === true || isAvailable === 'true';
         if (isFeatured !== undefined) product.isFeatured = isFeatured === true || isFeatured === 'true';
+        if (allowsDelivery !== undefined) product.allowsDelivery = allowsDelivery === true || allowsDelivery === 'true';
+        if (allowsPickup !== undefined) product.allowsPickup = allowsPickup === true || allowsPickup === 'true';
+        if (product.allowsDelivery === false && product.allowsPickup === false) {
+            product.allowsPickup = true;
+        }
 
         await product.save({ transaction });
         await transaction.commit();
@@ -505,7 +557,7 @@ exports.updateProduct = async (req, res) => {
         });
     } catch (error) {
         await transaction.rollback();
-        
+
         // Clean up uploaded files if update fails
         if (req.files && req.files.length > 0) {
             req.files.forEach(file => {

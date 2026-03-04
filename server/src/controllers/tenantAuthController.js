@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const db = require('../models');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 
@@ -277,7 +277,7 @@ const updateProfile = async (req, res) => {
 
     // Update fields
     if (businessName) tenant.businessName = businessName;
-    if (businessType) tenant.businessType = businessType;
+    if (businessType) tenant.businessType = Array.isArray(businessType) ? businessType : [businessType];
     if (contactPhone) tenant.contactPhone = contactPhone;
     if (address) tenant.address = address;
     if (city) tenant.city = city;

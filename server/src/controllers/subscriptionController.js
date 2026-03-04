@@ -1,5 +1,6 @@
 const db = require('../models');
 const { Op } = require('sequelize');
+const { getActiveSubscriptionForTenant } = require('../services/tenantSubscriptionService');
 
 /**
  * Get available packages (public endpoint for registration/browsing)
@@ -32,36 +33,21 @@ exports.getAvailablePackages = async (req, res) => {
 };
 
 /**
- * Get tenant's current subscription
+ * Get tenant's current subscription (uses shared service so dashboard always sees correct plan)
  */
 exports.getCurrentSubscription = async (req, res) => {
     try {
-        const { tenantId } = req;
-        
-        const subscription = await db.TenantSubscription.findOne({
-            where: {
-                tenantId,
-                status: { [Op.in]: ['trial', 'active', 'past_due'] }
-            },
-            include: [
-                {
-                    model: db.SubscriptionPackage,
-                    as: 'package'
-                }
-            ],
-            order: [['currentPeriodEnd', 'DESC']]
-        });
-        
-        if (!subscription) {
+        const tenantId = req.tenantId || req.tenant?.id;
+        const result = await getActiveSubscriptionForTenant(tenantId);
+        if (!result) {
             return res.status(404).json({
                 success: false,
                 message: 'No active subscription found'
             });
         }
-        
         res.json({
             success: true,
-            subscription
+            subscription: result.subscription
         });
     } catch (error) {
         console.error('Get subscription error:', error);
@@ -73,36 +59,20 @@ exports.getCurrentSubscription = async (req, res) => {
 };
 
 /**
- * Get tenant's usage statistics
+ * Get tenant's usage statistics (uses shared service for correct subscription)
  */
 exports.getUsageStats = async (req, res) => {
     try {
-        const { tenantId } = req;
-        
-        // Get usage
+        const tenantId = req.tenantId || req.tenant?.id;
         const usage = await db.TenantUsage.findOne({ where: { tenantId } });
-        
-        // Get subscription
-        const subscription = await db.TenantSubscription.findOne({
-            where: {
-                tenantId,
-                status: { [Op.in]: ['trial', 'active', 'past_due'] }
-            },
-            include: [
-                {
-                    model: db.SubscriptionPackage,
-                    as: 'package'
-                }
-            ]
-        });
-        
-        if (!subscription) {
+        const result = await getActiveSubscriptionForTenant(tenantId);
+        if (!result) {
             return res.status(404).json({
                 success: false,
                 message: 'No active subscription found'
             });
         }
-        
+        const { subscription } = result;
         const limits = subscription.package.limits;
         
         // Calculate usage percentages
@@ -308,6 +278,128 @@ exports.requestSubscriptionChange = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to process subscription change request'
+        });
+    }
+};
+
+/**
+ * Request upgrade: create upgrade Bill, set subscription to APPROVED_PENDING_PAYMENT, 48h grace, send email with Pay link
+ */
+exports.requestUpgrade = async (req, res) => {
+    try {
+        const { tenantId } = req;
+        const { newPackageId, billingCycle } = req.body;
+
+        if (!newPackageId || !billingCycle) {
+            return res.status(400).json({
+                success: false,
+                message: 'newPackageId and billingCycle are required'
+            });
+        }
+
+        const newPackage = await db.SubscriptionPackage.findByPk(newPackageId);
+        if (!newPackage || !newPackage.isActive) {
+            return res.status(404).json({
+                success: false,
+                message: 'Package not found or inactive'
+            });
+        }
+
+        const currentSubscription = await db.TenantSubscription.findOne({
+            where: {
+                tenantId,
+                status: { [Op.in]: ['trial', 'active', 'APPROVED_FREE_ACTIVE'] }
+            },
+            include: [{ model: db.SubscriptionPackage, as: 'package' }]
+        });
+
+        if (!currentSubscription) {
+            return res.status(400).json({
+                success: false,
+                message: 'No active subscription to upgrade'
+            });
+        }
+
+        let amount = 0;
+        switch (billingCycle) {
+            case 'monthly':
+                amount = parseFloat(newPackage.monthlyPrice) || 0;
+                break;
+            case 'sixMonth':
+                amount = parseFloat(newPackage.sixMonthPrice) || 0;
+                break;
+            case 'annual':
+                amount = parseFloat(newPackage.annualPrice) || 0;
+                break;
+            default:
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid billing cycle. Use monthly, sixMonth, or annual.'
+                });
+        }
+
+        const now = new Date();
+        const graceEndsAt = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+        const dueDateStr = graceEndsAt.toISOString().slice(0, 10);
+
+        const { generateBillNumber, generatePaymentToken } = require('../utils/billUtils');
+
+        await currentSubscription.update({
+            packageId: newPackageId,
+            billingCycle,
+            amount,
+            status: 'APPROVED_PENDING_PAYMENT',
+            gracePeriodEnds: graceEndsAt
+        });
+
+        const billNumber = await generateBillNumber();
+        const paymentToken = generatePaymentToken();
+
+        await db.Bill.create({
+            tenantId,
+            tenantSubscriptionId: currentSubscription.id,
+            billNumber,
+            amount,
+            currency: 'SAR',
+            dueDate: dueDateStr,
+            status: 'UNPAID',
+            paymentToken,
+            paymentTokenExpiresAt: graceEndsAt,
+            planSnapshot: {
+                packageName: newPackage.name,
+                packageNameAr: newPackage.name_ar,
+                billingCycle
+            },
+            type: 'upgrade',
+            metadata: { upgradeFromPlanId: currentSubscription.packageId }
+        });
+
+        const tenant = await db.Tenant.findByPk(tenantId);
+        const baseUrl = process.env.TENANT_DASHBOARD_URL || process.env.PAYMENT_PAGE_BASE_URL || 'http://localhost:3003';
+        const locale = (tenant && tenant.settings && typeof tenant.settings === 'object' && tenant.settings.language) ? tenant.settings.language : 'ar';
+        const paymentUrl = `${baseUrl.replace(/\/$/, '')}/${locale}/payment?token=${paymentToken}`;
+        const { sendApprovalEmailPaid } = require('../utils/emailService');
+        sendApprovalEmailPaid(tenant, {
+            paymentUrl,
+            billNumber,
+            amount,
+            dueDate: dueDateStr,
+            currency: 'SAR'
+        }).catch((err) => console.error('[Upgrade] Failed to send email:', err.message));
+
+        res.json({
+            success: true,
+            message: 'Upgrade initiated. Please pay within 48 hours to activate your new plan.',
+            paymentUrl,
+            billNumber,
+            amount,
+            dueDate: dueDateStr
+        });
+    } catch (error) {
+        console.error('Request upgrade error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to process upgrade request'
         });
     }
 };

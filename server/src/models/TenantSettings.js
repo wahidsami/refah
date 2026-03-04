@@ -67,7 +67,9 @@ module.exports = (sequelize, DataTypes) => {
                 requirePhoneVerification: false, // Future
                 allowWalkInBooking: true, // Tenant can create booking from dashboard
                 cancellationWindow: 24, // hours before appointment (future)
-                noShowPolicy: 'warn' // 'warn', 'penalty', 'ban' (future)
+                noShowPolicy: 'warn', // 'warn', 'penalty', 'ban' (future)
+                depositPercentage: 50, // e.g. 50 = pay 50% online, rest at center
+                allowDepositBooking: true // Allow customers to pay deposit only online
             },
             comment: 'Booking preferences: slot interval, buffers, policies, etc.'
         },
@@ -96,6 +98,27 @@ module.exports = (sequelize, DataTypes) => {
             defaultValue: 24,
             comment: 'Minimum hours before appointment for cancellation'
         },
+        cancellationFeeType: {
+            type: DataTypes.STRING(20),
+            defaultValue: 'none',
+            allowNull: true,
+            field: 'cancellation_fee_type',
+            comment: 'none | percentage | fixed - fee applied when customer cancels and had paid'
+        },
+        cancellationFeeValue: {
+            type: DataTypes.DECIMAL(10, 2),
+            defaultValue: 0,
+            allowNull: true,
+            field: 'cancellation_fee_value',
+            comment: 'Percentage 0-100 or fixed amount in currency'
+        },
+        defaultDeliveryFee: {
+            type: DataTypes.DECIMAL(10, 2),
+            allowNull: true,
+            defaultValue: 0,
+            field: 'default_delivery_fee',
+            comment: 'Default delivery fee (SAR) when customer chooses delivery'
+        },
         // Payment settings
         paymentSettings: {
             type: DataTypes.JSON,
@@ -122,8 +145,8 @@ module.exports = (sequelize, DataTypes) => {
         // Notification settings
         notificationSettings: {
             type: DataTypes.JSON,
-            defaultValue: {},
-            comment: 'Notification preferences'
+            defaultValue: { remindRemainderToCollect: true },
+            comment: 'Notification preferences; remindRemainderToCollect = remind staff to collect remainder when service marked done'
         },
         enableEmailNotifications: {
             type: DataTypes.BOOLEAN,

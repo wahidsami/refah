@@ -5,6 +5,22 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
+/** Backend origin (no /api/v1) for images and proxy */
+export const API_ORIGIN = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL
+  ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/v1\/?$/, '')
+  : 'http://localhost:5000';
+
+/** Public page base URL (e.g. http://localhost:3004 or https://public.rifah.sa) */
+export const PUBLIC_PAGE_URL = process.env.NEXT_PUBLIC_PUBLIC_PAGE_URL || 'http://localhost:3004';
+
+export function getImageUrl(path: string | null | undefined): string {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  const normalized = path.startsWith('/') ? path.slice(1) : path;
+  const prefix = normalized.startsWith('uploads/') ? '' : 'uploads/';
+  return `${API_ORIGIN}/${prefix}${normalized}`;
+}
+
 // Secure token storage using httpOnly cookies (handled by backend)
 // For client-side, we use sessionStorage (more secure than localStorage)
 // In production, tokens should be in httpOnly cookies set by backend
@@ -213,6 +229,13 @@ class ApiClient {
 
         return response.json();
     }
+
+    /**
+     * Add tip to a completed appointment
+     */
+    async addAppointmentTip(appointmentId: string, amount: number, paymentMethod?: string): Promise<{ success: boolean; message?: string; appointment?: any }> {
+        return this.post(`/users/bookings/${appointmentId}/tip`, { amount, paymentMethod });
+    }
 }
 
 // Export singleton instance
@@ -298,6 +321,7 @@ export interface Appointment {
     paymentStatus?: string;
     paymentMethod?: string;
     paidAt?: string;
+    remainderAmount?: number;
     notes?: string;
     tenantId?: string;
     Service?: Service;

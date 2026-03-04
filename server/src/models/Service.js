@@ -28,17 +28,17 @@ module.exports = (sequelize, DataTypes) => {
         }
 
         /**
-         * Calculate final price based on raw price, tax, and commission
+         * Calculate final price: (raw + platform fee) then 15% tax on that sum.
+         * Formula: subtotal = raw + platform fee; tax = subtotal * taxRate%; final = subtotal + tax.
          */
         calculateFinalPrice() {
             const raw = parseFloat(this.rawPrice || 0);
             const taxRate = parseFloat(this.taxRate || 15);
             const commissionRate = parseFloat(this.commissionRate || 10);
-            
-            const tax = raw * (taxRate / 100);
-            const commission = raw * (commissionRate / 100);
-            
-            return (raw + tax + commission).toFixed(2);
+            const platformFee = raw * (commissionRate / 100);
+            const subtotalBeforeTax = raw + platformFee;
+            const tax = subtotalBeforeTax * (taxRate / 100);
+            return (subtotalBeforeTax + tax).toFixed(2);
         }
     }
 
@@ -152,6 +152,16 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.TEXT,
             allowNull: true,
             comment: 'Offer description (e.g., "20% off this month")'
+        },
+        offerFrom: {
+            type: DataTypes.DATEONLY,
+            allowNull: true,
+            comment: 'Offer valid from (inclusive); null = no start limit'
+        },
+        offerTo: {
+            type: DataTypes.DATEONLY,
+            allowNull: true,
+            comment: 'Offer valid to (inclusive); null = no end limit'
         },
         // Gifts
         hasGift: {

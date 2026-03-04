@@ -1,19 +1,20 @@
 /**
  * Next.js API Route to proxy images from backend
  * This bypasses CORS issues by serving images through Next.js
- * 
- * Path: /api/images/uploads/profiles/filename.png
- * Backend: http://localhost:5000/uploads/profiles/filename.png
+ * Backend origin from NEXT_PUBLIC_API_URL (e.g. http://localhost:5000 or https://api.rifah.sa)
  */
+
+const BACKEND_ORIGIN = process.env.NEXT_PUBLIC_API_URL
+    ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/v1\/?$/, '')
+    : 'http://localhost:5000';
 
 export async function GET(
     request: Request,
     { params }: { params: { path: string[] } }
 ) {
-    // Await params in Next.js 15 (or just use directly in 14)
     const resolvedParams = await Promise.resolve(params);
     const imagePath = resolvedParams.path.join('/');
-    const backendUrl = 'http://localhost:5000';
+    const backendUrl = BACKEND_ORIGIN;
     
     // The path already includes 'uploads/profiles/...' so don't add /uploads again
     const imageUrl = `${backendUrl}/${imagePath}`;
