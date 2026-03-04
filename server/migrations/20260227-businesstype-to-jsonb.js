@@ -1,44 +1,46 @@
 'use strict';
 
 /**
- * Migration: Convert businessType from ENUM to JSONB array
+ * Migration: Convert businessType from ENUM to JSONB array (or add as JSONB if column missing).
  * This allows tenants to have multiple business types (e.g. ["salon", "spa"])
  */
 module.exports = {
     async up(queryInterface, Sequelize) {
-        // Step 1: Add a temporary JSONB column
-        await queryInterface.addColumn('tenants', 'businessType_new', {
-            type: Sequelize.JSONB,
-            allowNull: true
-        });
+        const sequelize = queryInterface.sequelize;
+        const dialect = sequelize.getDialect();
+        if (dialect !== 'postgres') return;
 
-        // Step 2: Migrate existing ENUM values to JSONB arrays
-        await queryInterface.sequelize.query(`
-      UPDATE tenants
-      SET "businessType_new" = CASE
-        WHEN "businessType" IS NOT NULL THEN jsonb_build_array("businessType"::text)
-        ELSE '["salon"]'::jsonb
-      END
-    `);
+        const [rows] = await sequelize.query(`
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'tenants' AND column_name = 'businessType'
+        `);
+        const hasBusinessType = rows && rows.length > 0;
 
-        // Step 3: Drop the old ENUM column
-        await queryInterface.removeColumn('tenants', 'businessType');
-
-        // Step 4: Rename the new column to businessType
-        await queryInterface.renameColumn('tenants', 'businessType_new', 'businessType');
-
-        // Step 5: Set default and not null
-        await queryInterface.changeColumn('tenants', 'businessType', {
-            type: Sequelize.JSONB,
-            allowNull: false,
-            defaultValue: ['salon']
-        });
-
-        // Step 6: Drop the old ENUM type (cleanup)
-        await queryInterface.sequelize.query(`
-      DROP TYPE IF EXISTS "enum_tenants_businessType";
-    `);
-
+        if (hasBusinessType) {
+            await queryInterface.addColumn('tenants', 'businessType_new', {
+                type: Sequelize.JSONB,
+                allowNull: true
+            });
+            await sequelize.query(`
+                UPDATE tenants
+                SET "businessType_new" = CASE
+                    WHEN "businessType" IS NOT NULL THEN jsonb_build_array("businessType"::text)
+                    ELSE '["salon"]'::jsonb
+                END
+            `);
+            await queryInterface.removeColumn('tenants', 'businessType');
+            await queryInterface.renameColumn('tenants', 'businessType_new', 'businessType');
+            await queryInterface.changeColumn('tenants', 'businessType', {
+                type: Sequelize.JSONB,
+                allowNull: false,
+                defaultValue: ['salon']
+            });
+            await sequelize.query(`DROP TYPE IF EXISTS "enum_tenants_businessType";`);
+        } else {
+            await sequelize.query(`
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS "businessType" JSONB NOT NULL DEFAULT '["salon"]'::jsonb;
+            `);
+        }
         console.log('✅ businessType converted from ENUM to JSONB array');
     },
 
