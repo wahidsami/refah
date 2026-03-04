@@ -59,13 +59,19 @@ module.exports = {
       const policyName = `rlsp_${table}_tenant`;
       const useSnake = table === 'hot_deals';
       const expr = useSnake ? POLICY_EXPR_SNAKE : POLICY_EXPR;
-      await sequelize.query(`
-        DROP POLICY IF EXISTS "${policyName}" ON "${table}";
-        CREATE POLICY "${policyName}" ON "${table}"
-          FOR ALL
-          USING ${expr}
-          WITH CHECK ${expr};
-      `);
+      try {
+        await sequelize.query(`
+          DROP POLICY IF EXISTS "${policyName}" ON "${table}";
+          CREATE POLICY "${policyName}" ON "${table}"
+            FOR ALL
+            USING ${expr}
+            WITH CHECK ${expr};
+        `);
+      } catch (err) {
+        if (err.message && err.message.includes('does not exist')) {
+          console.warn(`Table ${table} not found, skipping RLS policy`);
+        } else throw err;
+      }
     }
 
     await sequelize.query(`

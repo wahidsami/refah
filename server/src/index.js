@@ -295,6 +295,8 @@ const startServer = async () => {
         await db.ActivityLog.sync({ force: false });
         await db.SubscriptionPackage.sync({ force: false });
         await db.Tenant.sync({ force: false });
+        await db.TenantSettings.sync({ force: false });
+        await db.HotDeal.sync({ force: false });
         await db.TenantSubscription.sync({ force: false });
         await db.TenantUsage.sync({ force: false });
         await db.UsageAlert.sync({ force: false });
