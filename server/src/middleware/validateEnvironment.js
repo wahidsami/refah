@@ -25,15 +25,17 @@ const DEFAULT_JWT_SECRETS = [
 
 const validateEnvironment = () => {
     const requiredVars = [
-        'POSTGRES_USER',
-        'POSTGRES_PASSWORD',
-        'POSTGRES_DB',
-        'DB_HOST',
-        'DB_PORT',
         'PORT',
         'JWT_SECRET',
         'JWT_REFRESH_SECRET'
     ];
+
+    // Database: either DATABASE_URL (e.g. Coolify/production) or individual Postgres vars
+    const hasDatabaseUrl = !!process.env.DATABASE_URL;
+    const dbVars = ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB', 'DB_HOST', 'DB_PORT'];
+    if (!hasDatabaseUrl) {
+        requiredVars.push(...dbVars);
+    }
 
     const missingVars = requiredVars.filter(v => !process.env[v]);
 
@@ -86,10 +88,10 @@ Set a strong, unique JWT_REFRESH_SECRET in your .env file.
             process.exit(1);
         }
 
-        if (process.env.POSTGRES_PASSWORD === 'dev_password') {
+        if (!hasDatabaseUrl && process.env.POSTGRES_PASSWORD === 'dev_password') {
             console.warn(`
 ⚠️  WARNING: Using weak database password in production!
-This is a SECURITY RISK. Please set a strong POSTGRES_PASSWORD in .env.
+This is a SECURITY RISK. Please set a strong POSTGRES_PASSWORD in .env or use DATABASE_URL.
             `);
         }
     }
